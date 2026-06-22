@@ -1,9 +1,11 @@
-/* global Vue, fetch, localStorage, location, history, addEventListener, confirm, setTimeout, URLSearchParams, Math, Number, String, Object, Date, JSON, Error, encodeURIComponent */
+/* global Vue, fetch, localStorage, location, history, addEventListener, confirm, setTimeout, URLSearchParams, Math, Number, String, Object, Date, JSON, Error, encodeURIComponent, window */
 const { createApp } = Vue;
+const API_BASE_URL = String(window.YAMYAM_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 
 const api = {
   async request(url, options = {}) {
-    const response = await fetch(url, {
+    const requestUrl = /^https?:\/\//i.test(url) ? url : `${API_BASE_URL}${url}`;
+    const response = await fetch(requestUrl, {
       headers: { "Content-Type": "application/json", ...(options.headers || {}) },
       ...options
     });

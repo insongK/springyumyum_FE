@@ -19,8 +19,19 @@ assets/
 Open this folder in Visual Studio Code:
 
 ```powershell
-code C:\SSAFY\workspace\02front\vueyum
+code C:\SSAFY\workspace\02front\frontyum\vueyum
 ```
 
-The current frontend is a static Vue app loaded from CDN, so it can be served
-with any static file server.
+Install dependencies once:
+
+```powershell
+npm install
+```
+
+Run the frontend:
+
+```powershell
+npm run dev
+```
+
+The app expects the Spring backend at `http://localhost:8080`.
