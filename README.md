@@ -9,9 +9,11 @@ This repository contains the static Vue frontend split from the original
 
 ```text
 index.html
+src/
+  main.js
+  App.vue
 assets/
   css/
-  js/
 ```
 
 ## Development
@@ -35,3 +37,4 @@ npm run dev
 ```
 
 The app expects the Spring backend at `http://localhost:8080`.
+Set `VITE_YAMYAM_API_BASE_URL` when the backend URL changes.
