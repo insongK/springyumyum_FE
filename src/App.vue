@@ -3,10 +3,10 @@ const API_BASE_URL = String(import.meta.env.VITE_YAMYAM_API_BASE_URL || "http://
 
 function readStoredUser() {
   try {
+    localStorage.removeItem("yamyam.token");
     return JSON.parse(localStorage.getItem("yamyam.user") || "null");
   } catch (e) {
     localStorage.removeItem("yamyam.user");
-    localStorage.removeItem("yamyam.token");
     return null;
   }
 }
@@ -19,12 +19,11 @@ function clearStoredAuth() {
 const api = {
   async request(url, options = {}) {
     const requestUrl = /^https?:\/\//i.test(url) ? url : `${API_BASE_URL}${url}`;
-    const token = localStorage.getItem("yamyam.token") || "";
-    const authHeaders = options.auth === false || !token ? {} : { Authorization: `Bearer ${token}` };
-    const { auth, ...fetchOptions } = options;
+    const { headers, ...fetchOptions } = options;
     const response = await fetch(requestUrl, {
-      headers: { "Content-Type": "application/json", ...authHeaders, ...(fetchOptions.headers || {}) },
-      ...fetchOptions
+      ...fetchOptions,
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(headers || {}) }
     });
 
     if (!response.ok) {
@@ -76,13 +75,11 @@ export default {
   data() {
     const initialRoute = routes[location.pathname] || "home";
     const storedUser = readStoredUser();
-    const storedToken = localStorage.getItem("yamyam.token") || "";
     const isAuthRoute = ["login", "signup"].includes(initialRoute);
     return {
-      route: storedUser && storedToken || isAuthRoute ? initialRoute : "login",
+      route: storedUser || isAuthRoute ? initialRoute : "login",
       query: new URLSearchParams(location.search),
       user: storedUser,
-      token: storedToken,
       loading: false,
       toast: "",
       meals: [],
@@ -131,7 +128,7 @@ export default {
   },
   computed: {
     authenticated() {
-      return !!this.user && !!this.token;
+      return !!this.user;
     },
     displayName() {
       return this.user && this.user.nickname ? this.user.nickname : "사용자";
@@ -236,7 +233,6 @@ export default {
       if (!this.authenticated && !["login", "signup"].includes(this.route)) {
         clearStoredAuth();
         this.user = null;
-        this.token = "";
         this.go("/auth/login");
         return false;
       }
@@ -265,13 +261,11 @@ export default {
       try {
         const result = await api.request("/api/auth/login", {
           method: "POST",
-          auth: false,
           body: JSON.stringify(this.loginForm)
         });
         this.user = result.user;
-        this.token = result.accessToken || "";
         localStorage.setItem("yamyam.user", JSON.stringify(this.user));
-        localStorage.setItem("yamyam.token", this.token);
+        localStorage.removeItem("yamyam.token");
         this.go("/home");
       } catch (error) {
         this.notify(error.message);
@@ -281,21 +275,18 @@ export default {
       try {
         await api.request("/api/users", {
           method: "POST",
-          auth: false,
           body: JSON.stringify(this.signupForm)
         });
         const result = await api.request("/api/auth/login", {
           method: "POST",
-          auth: false,
           body: JSON.stringify({
             email: this.signupForm.email,
             password: this.signupForm.password
           })
         });
         this.user = result.user;
-        this.token = result.accessToken || "";
         localStorage.setItem("yamyam.user", JSON.stringify(this.user));
-        localStorage.setItem("yamyam.token", this.token);
+        localStorage.removeItem("yamyam.token");
         this.go("/home");
       } catch (error) {
         this.notify(error.message);
@@ -309,7 +300,6 @@ export default {
       }
       clearStoredAuth();
       this.user = null;
-      this.token = "";
       this.go("/auth/login");
     },
     async loadMeals() {
