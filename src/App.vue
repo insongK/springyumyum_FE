@@ -92,6 +92,8 @@ export default {
       analysis: null,
       advice: null,
       adviceV2: null,
+      coachLoading: false,
+      coachV2Loading: false,
       mealFilters: { startDate: "", endDate: "", mealType: "", sortKey: "dateDesc" },
       loginForm: { email: "demo@yamyam.com", password: "Demo1234!" },
       signupForm: {
@@ -114,6 +116,7 @@ export default {
         foods: []
       },
       foodKeyword: "",
+      challengeCreateOpen: false,
       challengeForm: { title: "", description: "", category: "식단", targetCount: 7, endDate: "" },
       postForm: { category: "meal", linkedMealId: "", title: "", content: "" },
       commentDrafts: {},
@@ -170,6 +173,25 @@ export default {
         ? Math.min(100, Math.round(this.todaySummary.calories * 100 / this.dailyGoal.calories))
         : 0;
     },
+    calorieRemaining() {
+      return Math.max(0, this.dailyGoal.calories - this.todaySummary.calories);
+    },
+    todayMeals() {
+      const today = new Date().toISOString().slice(0, 10);
+      return this.meals.filter(meal => meal.mealDate === today);
+    },
+    joinedChallenges() {
+      return this.challenges.filter(challenge => this.memberships[challenge.id]);
+    },
+    availableChallenges() {
+      return this.challenges.filter(challenge => !this.memberships[challenge.id]);
+    },
+    macroTip() {
+      if (!this.todaySummary.calories) return "오늘 첫 식단을 기록하면 탄단지 균형을 바로 확인할 수 있어요.";
+      if (this.todaySummary.proteinPct >= 30) return "단백질 섭취가 좋아요. 남은 식사는 채소와 건강한 지방을 더해보세요.";
+      if (this.todaySummary.carbsPct >= 60) return "탄수화물 비율이 높은 편이에요. 다음 식사는 단백질을 조금 더 챙겨보세요.";
+      return "오늘의 탄단지 균형이 안정적이에요. 다음 식단도 같은 흐름으로 이어가보세요.";
+    },
     filteredMeals() {
       let result = [...this.meals];
       if (this.mealFilters.startDate) {
@@ -188,6 +210,41 @@ export default {
         return String(b.mealDate).localeCompare(String(a.mealDate));
       });
       return result;
+    },
+    filteredMealSummary() {
+      const totals = this.filteredMeals.reduce((acc, meal) => {
+        const nutrition = meal.nutrition || {};
+        acc.calories += Number(nutrition.calories || 0);
+        acc.carbs += Number(nutrition.carbs || 0);
+        acc.protein += Number(nutrition.protein || 0);
+        acc.fat += Number(nutrition.fat || 0);
+        return acc;
+      }, { calories: 0, carbs: 0, protein: 0, fat: 0 });
+      const count = this.filteredMeals.length;
+      return {
+        count,
+        calories: Math.round(totals.calories),
+        avgCalories: count ? Math.round(totals.calories / count) : 0,
+        carbs: Math.round(totals.carbs),
+        protein: Math.round(totals.protein),
+        fat: Math.round(totals.fat)
+      };
+    },
+    mealFormSummary() {
+      const totals = this.mealForm.foods.reduce((acc, food) => {
+        const ratio = (Number(food.grams) || 100) / 100;
+        acc.calories += Number(food.energy || 0) * ratio;
+        acc.carbs += Number(food.carbs || 0) * ratio;
+        acc.protein += Number(food.protein || 0) * ratio;
+        acc.fat += Number(food.fat || 0) * ratio;
+        return acc;
+      }, { calories: 0, carbs: 0, protein: 0, fat: 0 });
+      return {
+        calories: Math.round(totals.calories),
+        carbs: Math.round(totals.carbs),
+        protein: Math.round(totals.protein),
+        fat: Math.round(totals.fat)
+      };
     },
     analysisRecommendations() {
       return this.analysis && this.analysis.recommendations ? this.analysis.recommendations : [];
@@ -407,27 +464,68 @@ export default {
       this.participants = data.participants || {};
     },
     async createChallenge() {
-      const data = await api.post("/api/challenges", {
-        ...this.challengeForm,
-        userId: this.user.id,
-        targetCount: Number(this.challengeForm.targetCount)
-      });
-      this.challenges = data.challenges || [];
-      this.memberships = data.memberships || {};
-      this.participants = data.participants || {};
-      this.challengeForm = { title: "", description: "", category: "식단", targetCount: 7, endDate: "" };
+      try {
+        const data = await api.post("/api/challenges", {
+          ...this.challengeForm,
+          userId: this.user.id,
+          targetCount: Number(this.challengeForm.targetCount)
+        });
+        this.applyChallengeData(data);
+        this.challengeForm = { title: "", description: "", category: "식단", targetCount: 7, endDate: "" };
+        this.notify("챌린지를 생성했습니다.");
+      } catch (error) {
+        this.notify(error.message);
+      }
     },
     async joinChallenge(id) {
-      const data = await api.post(`/api/challenges/${id}/join`, { userId: this.user.id });
+      try {
+        const data = await api.post(`/api/challenges/${id}/join`, { userId: this.user.id });
+        this.applyChallengeData(data);
+        this.notify("챌린지에 참여했습니다.");
+      } catch (error) {
+        this.notify(error.message);
+      }
+    },
+    async updateChallengeProgress(id, progress) {
+      try {
+        const data = await api.post(`/api/challenges/${id}/progress`, { userId: this.user.id, progress: Number(progress) });
+        this.applyChallengeData(data);
+      } catch (error) {
+        this.notify(error.message);
+      }
+    },
+    applyChallengeData(data) {
       this.challenges = data.challenges || [];
       this.memberships = data.memberships || {};
       this.participants = data.participants || {};
     },
-    async updateChallengeProgress(id, progress) {
-      const data = await api.post(`/api/challenges/${id}/progress`, { userId: this.user.id, progress: Number(progress) });
-      this.challenges = data.challenges || [];
-      this.memberships = data.memberships || {};
-      this.participants = data.participants || {};
+    challengeProgress(challenge) {
+      const membership = this.memberships[challenge.id];
+      return membership ? Number(membership.progress || 0) : 0;
+    },
+    challengePercent(challenge) {
+      const target = Math.max(1, Number(challenge.targetCount || 1));
+      return Math.min(100, Math.round(this.challengeProgress(challenge) * 100 / target));
+    },
+    challengeDday(challenge) {
+      if (!challenge.endDate) return "기간 미정";
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const end = new Date(`${challenge.endDate}T00:00:00`);
+      const diff = Math.ceil((end - today) / 86400000);
+      if (diff < 0) return "종료";
+      if (diff === 0) return "D-Day";
+      return `D-${diff}`;
+    },
+    challengeParticipantCount(challenge) {
+      return (this.participants[challenge.id] || []).length;
+    },
+    challengeIconClass(category) {
+      const value = String(category || "");
+      if (value.includes("영양") || value.includes("단백질")) return "bi-egg-fried tone-orange";
+      if (value.includes("운동")) return "bi-heart-pulse tone-rose";
+      if (value.includes("습관")) return "bi-moon-stars tone-purple";
+      return "bi-basket2 tone-green";
     },
     async loadCommunity() {
       const category = this.community.category || "all";
@@ -447,13 +545,17 @@ export default {
       this.commentDrafts[postId] = "";
     },
     async askCoach() {
+      this.coachLoading = true;
       try {
         this.advice = await api.post("/api/coach/advice", { userId: this.user.id, ...this.coachForm });
       } catch (error) {
         this.notify(error.message);
+      } finally {
+        this.coachLoading = false;
       }
     },
     async askCoachV2() {
+      this.coachV2Loading = true;
       try {
         const endpoint = this.coachV2Form.mode === "llm-driven" ? "/api/v2/coach/llm-driven" : "/api/v2/coach/multi";
         this.adviceV2 = await api.post(endpoint, {
@@ -464,16 +566,38 @@ export default {
         });
       } catch (error) {
         this.notify(error.message);
+      } finally {
+        this.coachV2Loading = false;
       }
     },
     mealLabel(type) {
       return { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" }[type] || type;
+    },
+    mealTypeClass(type) {
+      return {
+        breakfast: "meal-type-breakfast",
+        lunch: "meal-type-lunch",
+        dinner: "meal-type-dinner",
+        snack: "meal-type-snack"
+      }[type] || "meal-type-default";
     },
     goalLabel(goal) {
       return { loss: "감량", maintain: "유지", gain: "증량" }[goal] || goal;
     },
     categoryLabel(category) {
       return { meal: "식단", question: "질문", tip: "팁" }[category] || category;
+    },
+    categoryClass(category) {
+      return {
+        meal: "category-meal",
+        question: "category-question",
+        tip: "category-tip"
+      }[category] || "category-default";
+    },
+    linkedMeal(post) {
+      const mealId = post && post.linkedMealId;
+      if (!mealId) return null;
+      return this.meals.find(meal => String(meal.id) === String(mealId)) || null;
     },
     mealCalories(meal) {
       return Math.round(Number(meal && meal.nutrition ? meal.nutrition.calories : 0));
@@ -489,6 +613,12 @@ export default {
     authorName(userId) {
       const author = this.community.authors ? this.community.authors[userId] : null;
       return author && author.nickname ? author.nickname : userId;
+    },
+    toneClass(value) {
+      const source = String(value || "");
+      const tones = ["tone-green", "tone-mint", "tone-orange", "tone-purple", "tone-blue", "tone-rose"];
+      const sum = [...source].reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      return tones[sum % tones.length];
     },
     summarize(foods) {
       const total = foods.reduce((acc, food) => {
@@ -568,30 +698,33 @@ export default {
 </div>
 
 <div v-else>
-  <nav class="navbar navbar-expand-lg app-nav navbar-dark">
-    <div class="container">
-      <a class="navbar-brand" href="/home" @click.prevent="go('/home')">냠냠코치</a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-      <div class="collapse navbar-collapse" id="mainNav">
-        <div class="navbar-nav me-auto ms-lg-3">
-          <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')">홈</a>
-          <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')">식단</a>
-          <a :class="navClass('/profile')" href="/profile" @click.prevent="go('/profile')">프로필</a>
-          <a :class="navClass('/social')" href="/social" @click.prevent="go('/social')">소셜</a>
-          <a :class="navClass('/challenge')" href="/challenge" @click.prevent="go('/challenge')">챌린지</a>
-          <a :class="navClass('/community')" href="/community" @click.prevent="go('/community')">커뮤니티</a>
-          <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')">코치</a>
-          <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')">코치 V2</a>
-        </div>
-        <div class="navbar-text me-3 d-none d-lg-block">{{ displayName }}</div>
-        <button class="btn btn-outline-light btn-sm" @click="logout">
-          <i class="bi bi-box-arrow-right me-1"></i>로그아웃
+  <header class="app-nav">
+    <div class="container app-nav-inner">
+      <a class="brand-mark" href="/home" @click.prevent="go('/home')">
+        <span class="brand-icon"><i class="bi bi-flower1"></i></span>
+        <span>YamYam</span>
+      </a>
+      <nav class="desktop-nav">
+        <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')">Dashboard</a>
+        <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')">History</a>
+        <a :class="navClass('/community')" href="/community" @click.prevent="go('/community')">Community</a>
+        <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')">AI Coach</a>
+        <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')">AI Coach V2</a>
+        <a :class="navClass('/challenge')" href="/challenge" @click.prevent="go('/challenge')">Challenge</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn btn-success btn-sm" @click="go('/meals/new')">
+          <i class="bi bi-plus-lg me-1"></i>새 식단
+        </button>
+        <button class="icon-button d-none d-sm-inline-flex" @click="go('/profile')" :title="displayName">
+          <i class="bi bi-person"></i>
+        </button>
+        <button class="icon-button" @click="logout" title="로그아웃">
+          <i class="bi bi-box-arrow-right"></i>
         </button>
       </div>
     </div>
-  </nav>
+  </header>
 
   <main class="container app-shell">
     <div class="loading-line" v-if="loading">불러오는 중...</div>
@@ -600,8 +733,8 @@ export default {
       <div class="panel-body page-title mb-0">
         <div>
           <div class="eyebrow text-white">Dashboard</div>
-          <h1>{{ displayName }}님의 식단 대시보드</h1>
-          <p class="muted mt-2 mb-0">오늘의 목표와 최근 기록을 확인합니다.</p>
+          <h1>Welcome back, {{ displayName }}님</h1>
+          <p class="muted mt-2 mb-0">오늘도 건강한 하루를 만들어볼까요? 식단과 코칭을 한 화면에서 확인하세요.</p>
         </div>
         <button class="btn btn-light" @click="go('/meals/new')">
           <i class="bi bi-plus-lg me-1"></i>식단 등록
@@ -609,7 +742,7 @@ export default {
       </div>
     </section>
 
-    <div class="page-title" v-else>
+    <div class="page-title" v-else-if="!['coach', 'coachV2', 'challenge'].includes(route)">
       <div>
         <div class="eyebrow">YamYam</div>
         <h1>{{ pageTitle }}</h1>
@@ -620,186 +753,321 @@ export default {
     </div>
 
     <section v-if="route === 'home'">
-      <div class="metric-grid mb-4">
-        <div class="metric">
-          <div class="metric-label">오늘 칼로리</div>
-          <div class="metric-value">{{ todaySummary.calories }}</div>
-          <div class="muted">목표 {{ dailyGoal.calories }} kcal</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">탄단지 비율</div>
-          <div class="metric-value">{{ todaySummary.carbsPct }}/{{ todaySummary.proteinPct }}/{{ todaySummary.fatPct }}</div>
-          <div class="muted">탄수화물 / 단백질 / 지방</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">식단 기록</div>
-          <div class="metric-value">{{ meals.length }}</div>
-          <div class="muted">전체 기록</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">참여 챌린지</div>
-          <div class="metric-value">{{ Object.keys(memberships).length }}</div>
-          <div class="muted">진행 중</div>
-        </div>
-      </div>
-
-      <div class="two-grid mb-4">
-        <div class="chart-panel">
-          <div class="section-head"><h2>오늘 칼로리 진행률</h2></div>
-          <div class="d-flex align-items-center gap-4">
-            <div class="donut" :style="{ '--pct': caloriePct }"><div class="donut-inner">{{ caloriePct }}%</div></div>
-            <div>
-              <div class="metric-value">{{ todaySummary.calories }} kcal</div>
-              <div class="muted">일일 목표 {{ dailyGoal.calories }} kcal</div>
-            </div>
-          </div>
-        </div>
-        <div class="chart-panel">
-          <div class="section-head"><h2>탄단지 비율</h2></div>
-          <div class="macro-bar mb-3">
-            <div class="macro-carb" :style="{ width: todaySummary.carbsPct + '%' }"></div>
-            <div class="macro-protein" :style="{ width: todaySummary.proteinPct + '%' }"></div>
-            <div class="macro-fat" :style="{ width: todaySummary.fatPct + '%' }"></div>
-          </div>
-          <span class="badge-soft badge-accent me-2">탄수화물 {{ todaySummary.carbsPct }}%</span>
-          <span class="badge-soft me-2">단백질 {{ todaySummary.proteinPct }}%</span>
-          <span class="badge-soft badge-danger-soft">지방 {{ todaySummary.fatPct }}%</span>
-        </div>
-      </div>
-
-      <div class="layout-grid">
-        <div class="panel">
-          <div class="panel-body">
-            <div class="section-head">
-              <h2>최근 식단</h2>
-              <button class="btn btn-outline-success btn-sm" @click="go('/meals')">전체 보기</button>
-            </div>
-            <div v-if="!meals.length" class="empty-state">등록된 식단이 없습니다.</div>
-            <a v-for="meal in filteredMeals.slice(0, 5)" :key="meal.id" class="meal-row" href="#" @click.prevent="go('/meals/detail?mealId=' + meal.id)">
-              <span class="badge-soft">{{ mealLabel(meal.mealType) }}</span>
-              <div>
-                <strong>{{ meal.mealDate }}</strong>
-                <div class="meal-foods">{{ mealFoodNames(meal) }}</div>
-                <div class="muted">{{ (meal.foods || []).length }}개 음식 · {{ mealCalories(meal) }} kcal</div>
+      <div class="dashboard-grid">
+        <div class="dashboard-main">
+          <div class="two-grid mb-4">
+            <div class="chart-panel calorie-card">
+              <div class="section-head">
+                <h2><i class="bi bi-fire text-accent"></i> 오늘 칼로리</h2>
               </div>
-              <i class="bi bi-chevron-right text-secondary"></i>
-            </a>
+              <div class="calorie-content">
+                <div class="donut" :style="{ '--pct': caloriePct }">
+                  <div class="donut-inner">
+                    <strong>{{ todaySummary.calories }}</strong>
+                    <span>/ {{ dailyGoal.calories }} kcal</span>
+                  </div>
+                </div>
+                <p class="muted mb-0">목표까지 <strong class="text-primary">{{ calorieRemaining }} kcal</strong> 남았어요.</p>
+              </div>
+            </div>
+
+            <div class="chart-panel macro-card">
+              <div class="section-head">
+                <h2><i class="bi bi-pie-chart text-primary"></i> 탄단지 비율</h2>
+              </div>
+              <div class="macro-list">
+                <div>
+                  <div class="macro-row"><span>탄수화물</span><span>{{ Math.round(todaySummary.carbs) }}g · {{ todaySummary.carbsPct }}%</span></div>
+                  <div class="bar-track"><div class="macro-carb" :style="{ width: todaySummary.carbsPct + '%' }"></div></div>
+                </div>
+                <div>
+                  <div class="macro-row"><span>단백질</span><span>{{ Math.round(todaySummary.protein) }}g · {{ todaySummary.proteinPct }}%</span></div>
+                  <div class="bar-track"><div class="macro-protein" :style="{ width: todaySummary.proteinPct + '%' }"></div></div>
+                </div>
+                <div>
+                  <div class="macro-row"><span>지방</span><span>{{ Math.round(todaySummary.fat) }}g · {{ todaySummary.fatPct }}%</span></div>
+                  <div class="bar-track"><div class="macro-fat" :style="{ width: todaySummary.fatPct + '%' }"></div></div>
+                </div>
+              </div>
+              <div class="insight-box mt-3"><i class="bi bi-lightbulb me-2 text-primary"></i>{{ macroTip }}</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-body">
+              <div class="section-head">
+                <h2><i class="bi bi-egg-fried text-primary"></i> 최근 식단 기록</h2>
+                <button class="btn btn-outline-success btn-sm" @click="go('/meals')">전체 보기</button>
+              </div>
+              <div v-if="!filteredMeals.length" class="empty-state">
+                <i class="bi bi-plus-circle display-6 d-block mb-2"></i>
+                아직 기록된 식단이 없습니다.
+                <div class="mt-3"><button class="btn btn-success btn-sm" @click="go('/meals/new')">첫 식단 기록하기</button></div>
+              </div>
+              <a v-for="meal in filteredMeals.slice(0, 5)" :key="meal.id" class="meal-row meal-card-row" href="#" @click.prevent="go('/meals/detail?mealId=' + meal.id)">
+                <span :class="['meal-type-box', mealTypeClass(meal.mealType)]">{{ mealLabel(meal.mealType) }}</span>
+                <div>
+                  <strong>{{ mealFoodNames(meal) }}</strong>
+                  <div class="muted">{{ meal.mealDate }} · {{ (meal.foods || []).length }}개 음식</div>
+                </div>
+                <div class="text-end">
+                  <strong>{{ mealCalories(meal) }} kcal</strong>
+                  <div class="mini-chip-list mt-1">
+                    <span>C {{ Math.round(meal.nutrition && meal.nutrition.carbs || 0) }}</span>
+                    <span>P {{ Math.round(meal.nutrition && meal.nutrition.protein || 0) }}</span>
+                    <span>F {{ Math.round(meal.nutrition && meal.nutrition.fat || 0) }}</span>
+                  </div>
+                </div>
+              </a>
+              <button class="add-meal-row" @click="go('/meals/new')">
+                <i class="bi bi-plus-circle"></i>
+                식사 기록하기
+              </button>
+            </div>
           </div>
         </div>
-        <aside class="panel">
-          <div class="panel-body">
-            <div class="section-head"><h2>활성 챌린지</h2></div>
-            <div v-if="!challenges.length" class="empty-state">진행 중인 챌린지가 없습니다.</div>
-            <a v-for="challenge in challenges.slice(0, 3)" :key="challenge.id" class="insight-box d-block mb-2" href="#" @click.prevent="go('/challenge')">
-              <strong>{{ challenge.title }}</strong>
-              <div class="muted mt-1">{{ challenge.description }}</div>
-              <div class="muted mt-2">목표 {{ challenge.targetCount }}회 · 종료 {{ challenge.endDate }}</div>
-            </a>
+
+        <aside class="dashboard-side">
+          <div class="panel">
+            <div class="panel-body">
+              <div class="section-head"><h2><i class="bi bi-trophy text-accent"></i> 진행 중인 챌린지</h2></div>
+              <div v-if="!joinedChallenges.length" class="empty-state compact-empty">
+                아직 참여 중인 챌린지가 없어요.
+                <div class="mt-3"><button class="btn btn-outline-success btn-sm" @click="go('/challenge')">챌린지 둘러보기</button></div>
+              </div>
+              <a v-for="challenge in joinedChallenges.slice(0, 3)" :key="challenge.id" class="insight-box d-block mb-2" href="#" @click.prevent="go('/challenge')">
+                <strong>{{ challenge.title }}</strong>
+                <div class="muted mt-1">{{ challenge.description }}</div>
+                <template v-if="memberships[challenge.id]">
+                  <div class="bar-track mt-3 mb-2">
+                    <div class="bar-fill" :style="{ width: Math.min(100, memberships[challenge.id].progress * 100 / challenge.targetCount) + '%' }"></div>
+                  </div>
+                  <div class="muted">{{ memberships[challenge.id].progress }} / {{ challenge.targetCount }}</div>
+                </template>
+              </a>
+            </div>
+          </div>
+
+          <div class="coach-teaser">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <i class="bi bi-robot"></i>
+              <strong>AI 코치 한마디</strong>
+            </div>
+            <p class="mb-0">"최근 식단을 바탕으로 다음 식사의 균형을 제안해드릴게요."</p>
           </div>
         </aside>
       </div>
     </section>
 
-    <section v-if="route === 'meals'">
-      <div class="panel mb-4">
-        <div class="panel-body">
-          <div class="row g-3 align-items-end">
-            <div class="col-md-3">
-              <label class="form-label">시작일</label>
-              <input class="form-control" type="date" v-model="mealFilters.startDate">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">종료일</label>
-              <input class="form-control" type="date" v-model="mealFilters.endDate">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">식사 유형</label>
-              <select class="form-select" v-model="mealFilters.mealType">
-                <option value="">전체</option>
-                <option value="breakfast">아침</option>
-                <option value="lunch">점심</option>
-                <option value="dinner">저녁</option>
-                <option value="snack">간식</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">정렬</label>
-              <select class="form-select" v-model="mealFilters.sortKey">
-                <option value="dateDesc">최신순</option>
-                <option value="dateAsc">오래된순</option>
-                <option value="energyDesc">칼로리 높은순</option>
-              </select>
+    <section v-if="route === 'meals'" class="meals-page-grid">
+      <div class="meals-main">
+        <div class="panel filter-panel mb-4">
+          <div class="panel-body">
+            <div class="row g-3 align-items-end">
+              <div class="col-md-6 col-xl-3">
+                <label class="form-label">기간 설정</label>
+                <input class="form-control" type="date" v-model="mealFilters.startDate">
+              </div>
+              <div class="col-md-6 col-xl-3">
+                <label class="form-label">종료일</label>
+                <input class="form-control" type="date" v-model="mealFilters.endDate">
+              </div>
+              <div class="col-md-6 col-xl-3">
+                <label class="form-label">식사 유형</label>
+                <select class="form-select" v-model="mealFilters.mealType">
+                  <option value="">전체보기</option>
+                  <option value="breakfast">아침</option>
+                  <option value="lunch">점심</option>
+                  <option value="dinner">저녁</option>
+                  <option value="snack">간식</option>
+                </select>
+              </div>
+              <div class="col-md-6 col-xl-3">
+                <label class="form-label">정렬 기준</label>
+                <select class="form-select" v-model="mealFilters.sortKey">
+                  <option value="dateDesc">최신순</option>
+                  <option value="dateAsc">오래된순</option>
+                  <option value="energyDesc">칼로리 높은순</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="panel">
-        <div class="panel-body">
-          <div v-if="!filteredMeals.length" class="empty-state">조회된 식단이 없습니다.</div>
-          <a v-for="meal in filteredMeals" :key="meal.id" class="meal-row" href="#" @click.prevent="go('/meals/detail?mealId=' + meal.id)">
-            <span class="badge-soft">{{ mealLabel(meal.mealType) }}</span>
-            <div>
-              <strong>{{ meal.mealDate }}</strong>
-              <div class="meal-foods">{{ mealFoodNames(meal) }}</div>
-              <div class="muted">{{ (meal.foods || []).length }}개 음식 · {{ mealCalories(meal) }} kcal · {{ meal.memo }}</div>
+        <div class="meal-log-list">
+          <div v-if="!filteredMeals.length" class="panel">
+            <div class="empty-state">
+              <i class="bi bi-journal-plus display-6 d-block mb-2"></i>
+              조회된 식단이 없습니다.
+              <div class="mt-3"><button class="btn btn-success btn-sm" @click="go('/meals/new')">새 식단 등록</button></div>
             </div>
-            <div class="row-actions">
-              <button class="btn btn-outline-success btn-sm" @click.stop.prevent="go('/meals/edit?mealId=' + meal.id)">수정</button>
-              <button class="btn btn-outline-danger btn-sm" @click.stop.prevent="deleteMeal(meal.id)">삭제</button>
-            </div>
-          </a>
-        </div>
-      </div>
-    </section>
+          </div>
 
-    <section v-if="route === 'mealForm'" class="two-grid">
-      <form class="panel" @submit.prevent="saveMeal">
-        <div class="panel-body d-grid gap-3">
-          <input class="form-control" v-model="mealForm.mealDate" type="date" required>
-          <select class="form-select" v-model="mealForm.mealType">
-            <option value="breakfast">아침</option>
-            <option value="lunch">점심</option>
-            <option value="dinner">저녁</option>
-            <option value="snack">간식</option>
-          </select>
-          <textarea class="form-control" v-model="mealForm.memo" rows="3" placeholder="메모"></textarea>
-          <div>
-            <h2 class="section-subtitle">선택한 음식</h2>
-            <div v-if="!mealForm.foods.length" class="empty-state">음식을 선택하세요.</div>
-            <div v-for="food in mealForm.foods" :key="food.foodCode" class="list-row">
-              <span class="badge-soft">{{ food.category }}</span>
-              <div>
-                <strong>{{ food.name }}</strong>
-                <input class="form-control mt-2" v-model.number="food.grams" type="number" step="1">
+          <article v-for="meal in filteredMeals" :key="meal.id" class="meal-log-card">
+            <a class="meal-log-card-main" href="#" @click.prevent="go('/meals/detail?mealId=' + meal.id)">
+              <div class="meal-log-meta">
+                <strong>{{ meal.mealDate }}</strong>
+                <span :class="['badge-soft', 'meal-type-badge', mealTypeClass(meal.mealType)]">{{ mealLabel(meal.mealType) }}</span>
               </div>
-              <button type="button" class="btn btn-outline-danger btn-sm" @click="removeFood(food.foodCode)">
-                <i class="bi bi-x-lg"></i>
+              <div class="meal-log-content">
+                <div class="food-chip-list">
+                  <span v-for="food in (meal.foods || []).slice(0, 4)" :key="food.code || food.foodCode || food.name" class="food-chip">{{ food.name }}</span>
+                  <span v-if="(meal.foods || []).length > 4" class="food-chip">+{{ (meal.foods || []).length - 4 }}</span>
+                  <span v-if="!(meal.foods || []).length" class="food-chip">음식 정보 없음</span>
+                </div>
+                <p class="muted fst-italic mb-0">{{ meal.memo || "메모 없음" }}</p>
+              </div>
+              <div class="meal-log-calories">
+                <strong>{{ mealCalories(meal) }} kcal</strong>
+                <span>{{ (meal.foods || []).length }}개 음식</span>
+              </div>
+            </a>
+            <div class="meal-log-actions">
+              <button class="icon-button" @click.stop.prevent="go('/meals/edit?mealId=' + meal.id)" title="수정">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="icon-button danger" @click.stop.prevent="deleteMeal(meal.id)" title="삭제">
+                <i class="bi bi-trash"></i>
               </button>
             </div>
+          </article>
+        </div>
+      </div>
+
+      <aside class="meals-summary">
+        <div class="panel sticky-summary">
+          <div class="panel-body">
+            <div class="section-head">
+              <h2><i class="bi bi-graph-up text-primary"></i> 기간 요약</h2>
+            </div>
+            <div class="summary-stack">
+              <div class="summary-row">
+                <span>총 식사 횟수</span>
+                <strong>{{ filteredMealSummary.count }}회</strong>
+              </div>
+              <div class="summary-row">
+                <span>총 칼로리</span>
+                <strong>{{ filteredMealSummary.calories }} kcal</strong>
+              </div>
+              <div class="summary-row">
+                <span>평균 칼로리</span>
+                <strong>{{ filteredMealSummary.avgCalories }} kcal</strong>
+              </div>
+            </div>
+            <div class="macro-summary">
+              <div><span>탄수화물</span><strong>{{ filteredMealSummary.carbs }}g</strong></div>
+              <div><span>단백질</span><strong>{{ filteredMealSummary.protein }}g</strong></div>
+              <div><span>지방</span><strong>{{ filteredMealSummary.fat }}g</strong></div>
+            </div>
           </div>
-          <button class="btn btn-success">저장</button>
+        </div>
+      </aside>
+    </section>
+
+    <section v-if="route === 'mealForm'" class="meal-form-grid">
+      <form class="meal-form-left" @submit.prevent="saveMeal">
+        <div class="panel meal-info-panel">
+          <div class="panel-body">
+            <div class="section-head">
+              <h2><i class="bi bi-info-circle text-primary"></i> 기본 정보</h2>
+            </div>
+            <div class="d-grid gap-3">
+              <div>
+                <label class="form-label">날짜</label>
+                <input class="form-control soft-input" v-model="mealForm.mealDate" type="date" required>
+              </div>
+              <div>
+                <label class="form-label">식사 종류</label>
+                <div class="meal-type-selector">
+                  <button type="button" :class="['meal-type-choice', mealForm.mealType === 'breakfast' && 'active', 'meal-type-breakfast']" @click="mealForm.mealType = 'breakfast'">아침</button>
+                  <button type="button" :class="['meal-type-choice', mealForm.mealType === 'lunch' && 'active', 'meal-type-lunch']" @click="mealForm.mealType = 'lunch'">점심</button>
+                  <button type="button" :class="['meal-type-choice', mealForm.mealType === 'dinner' && 'active', 'meal-type-dinner']" @click="mealForm.mealType = 'dinner'">저녁</button>
+                  <button type="button" :class="['meal-type-choice', mealForm.mealType === 'snack' && 'active', 'meal-type-snack']" @click="mealForm.mealType = 'snack'">간식</button>
+                </div>
+              </div>
+              <div>
+                <label class="form-label">메모</label>
+                <textarea class="form-control soft-input" v-model="mealForm.memo" rows="3" placeholder="오늘 식사에 대한 메모를 남겨보세요."></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel selected-food-panel">
+          <div class="panel-body">
+            <div class="section-head">
+              <h2><i class="bi bi-card-checklist text-primary"></i> 선택한 음식</h2>
+              <span class="badge-soft">{{ mealForm.foods.length }}개 항목</span>
+            </div>
+            <div v-if="!mealForm.foods.length" class="empty-state">
+              음식 검색 결과에서 추가할 음식을 선택하세요.
+            </div>
+            <div v-for="food in mealForm.foods" :key="food.foodCode" class="selected-food-row">
+              <div>
+                <strong>{{ food.name }}</strong>
+                <div class="muted">{{ food.category }} · 100g당 {{ Math.round(food.energy || 0) }} kcal</div>
+              </div>
+              <div class="selected-food-controls">
+                <div class="gram-input">
+                  <input v-model.number="food.grams" type="number" step="1" min="1">
+                  <span>g</span>
+                </div>
+                <button type="button" class="icon-button danger" @click="removeFood(food.foodCode)" title="제거">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="selected-summary">
+              <div class="summary-total">
+                <span>총 칼로리</span>
+                <strong>{{ mealFormSummary.calories }} kcal</strong>
+              </div>
+              <div class="macro-summary compact">
+                <div><span>탄수화물</span><strong>{{ mealFormSummary.carbs }}g</strong></div>
+                <div><span>단백질</span><strong>{{ mealFormSummary.protein }}g</strong></div>
+                <div><span>지방</span><strong>{{ mealFormSummary.fat }}g</strong></div>
+              </div>
+            </div>
+
+            <button class="btn btn-success btn-lg w-100 mt-4">
+              <i class="bi bi-check-circle me-1"></i>{{ mealForm.id ? "식단 수정 완료" : "식단 등록 완료" }}
+            </button>
+          </div>
         </div>
       </form>
 
-      <div class="panel">
+      <div class="panel food-search-panel">
         <div class="panel-body">
-          <div class="section-head"><h2>음식 검색</h2></div>
-          <div class="input-group mb-3">
-            <input class="form-control" v-model="foodKeyword" placeholder="음식명 또는 분류">
+          <div class="section-head">
+            <div>
+              <h2><i class="bi bi-search text-primary"></i> 음식 검색</h2>
+              <p class="muted mb-0">데이터베이스에서 음식을 검색하여 추가하세요.</p>
+            </div>
+          </div>
+          <div class="input-group search-input mb-3">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input class="form-control" v-model="foodKeyword" placeholder="예: 연어, 고구마, 오트밀">
             <button class="btn btn-outline-success" @click="loadFoods">검색</button>
           </div>
-          <div class="table-wrap">
-            <table class="table align-middle">
-              <thead><tr><th>음식</th><th>kcal</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="food in foods" :key="food.code">
-                  <td><strong>{{ food.name }}</strong><div class="muted">{{ food.category }}</div></td>
-                  <td>{{ Math.round(food.energy) }}</td>
-                  <td><button class="btn btn-outline-success btn-sm" @click="addFood(food)">추가</button></td>
-                </tr>
-              </tbody>
-            </table>
+
+          <div class="food-result-list">
+            <div v-if="!foods.length" class="empty-state">검색 결과가 없습니다.</div>
+            <div v-for="food in foods" :key="food.code" class="food-result-row">
+              <div :class="['food-result-icon', toneClass(food.code || food.name)]">{{ String(food.name || food.category || "?").slice(0, 2) }}</div>
+              <div class="food-result-body">
+                <strong>{{ food.name }}</strong>
+                <div class="muted">
+                  {{ food.category }} · 100g당 {{ Math.round(food.energy || 0) }} kcal
+                  · 탄 {{ Math.round(food.carbs || 0) }}g
+                  · 단 {{ Math.round(food.protein || 0) }}g
+                  · 지 {{ Math.round(food.fat || 0) }}g
+                </div>
+              </div>
+              <button class="add-food-button" @click="addFood(food)" title="추가">
+                <i class="bi bi-plus-lg"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -842,28 +1110,93 @@ export default {
       </aside>
     </section>
 
-    <section v-if="route === 'profile'" class="panel">
-      <form class="panel-body d-grid gap-3" @submit.prevent="saveProfile">
-        <div class="row g-3">
-          <div class="col-md-6"><label class="form-label">이메일</label><input class="form-control" v-model="profileForm.email" disabled></div>
-          <div class="col-md-6"><label class="form-label">닉네임</label><input class="form-control" v-model="profileForm.nickname" required></div>
-          <div class="col-md-4">
-            <label class="form-label">성별</label>
-            <select class="form-select" v-model="profileForm.gender"><option value="female">여성</option><option value="male">남성</option></select>
+    <section v-if="route === 'profile'" class="profile-page">
+      <form class="profile-card" @submit.prevent="saveProfile">
+        <section class="profile-header">
+          <div class="profile-avatar">{{ displayName.slice(0, 1) }}</div>
+          <div class="profile-header-copy">
+            <h2>{{ displayName }}님</h2>
+            <p>{{ profileForm.email }}</p>
+            <span class="badge-soft">{{ goalLabel(profileForm.goal) }}</span>
           </div>
-          <div class="col-md-4"><label class="form-label">출생연도</label><input class="form-control" v-model.number="profileForm.birthYear" type="number"></div>
-          <div class="col-md-4">
-            <label class="form-label">목표</label>
-            <select class="form-select" v-model="profileForm.goal"><option value="loss">감량</option><option value="maintain">유지</option><option value="gain">증량</option></select>
-          </div>
-          <div class="col-md-6"><label class="form-label">키</label><input class="form-control" v-model.number="profileForm.height" type="number" step="0.1"></div>
-          <div class="col-md-6"><label class="form-label">몸무게</label><input class="form-control" v-model.number="profileForm.weight" type="number" step="0.1"></div>
+        </section>
+
+        <div class="profile-form-grid">
+          <section class="profile-section">
+            <div class="section-title-inline">
+              <i class="bi bi-person text-primary"></i>
+              <h3>기본 정보</h3>
+            </div>
+            <div class="d-grid gap-3">
+              <div>
+                <label class="form-label">이메일</label>
+                <input class="form-control soft-input" v-model="profileForm.email" disabled>
+              </div>
+              <div>
+                <label class="form-label">닉네임</label>
+                <input class="form-control soft-input" v-model="profileForm.nickname" required>
+              </div>
+              <div>
+                <label class="form-label">성별</label>
+                <select class="form-select soft-input" v-model="profileForm.gender">
+                  <option value="female">여성</option>
+                  <option value="male">남성</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">출생연도</label>
+                <input class="form-control soft-input" v-model.number="profileForm.birthYear" type="number">
+              </div>
+              <div class="profile-two-cols">
+                <div>
+                  <label class="form-label">키 (cm)</label>
+                  <input class="form-control soft-input" v-model.number="profileForm.height" type="number" step="0.1">
+                </div>
+                <div>
+                  <label class="form-label">몸무게 (kg)</label>
+                  <input class="form-control soft-input" v-model.number="profileForm.weight" type="number" step="0.1">
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="profile-section">
+            <div class="section-title-inline">
+              <i class="bi bi-flag text-primary"></i>
+              <h3>건강 목표</h3>
+            </div>
+            <div class="goal-choice-list">
+              <label :class="['goal-choice', profileForm.goal === 'loss' && 'active']">
+                <input class="visually-hidden" type="radio" value="loss" v-model="profileForm.goal">
+                <span class="goal-icon"><i class="bi bi-graph-down-arrow"></i></span>
+                <span>체중 감량</span>
+              </label>
+              <label :class="['goal-choice', profileForm.goal === 'maintain' && 'active']">
+                <input class="visually-hidden" type="radio" value="maintain" v-model="profileForm.goal">
+                <span class="goal-icon"><i class="bi bi-arrow-repeat"></i></span>
+                <span>현재 유지</span>
+              </label>
+              <label :class="['goal-choice', profileForm.goal === 'gain' && 'active']">
+                <input class="visually-hidden" type="radio" value="gain" v-model="profileForm.goal">
+                <span class="goal-icon"><i class="bi bi-lightning-charge"></i></span>
+                <span>체중 증량</span>
+              </label>
+            </div>
+            <div class="mt-3">
+              <label class="form-label">건강 메모</label>
+              <textarea class="form-control soft-input" v-model="profileForm.healthNote" rows="4" placeholder="특별한 식이요법이나 주의사항이 있다면 기록해주세요."></textarea>
+            </div>
+          </section>
         </div>
-        <textarea class="form-control" v-model="profileForm.healthNote" rows="3" placeholder="건강 메모"></textarea>
-        <div class="row-actions">
-          <button class="btn btn-success">저장</button>
-          <button type="button" class="btn btn-outline-danger" @click="deactivate">탈퇴</button>
-        </div>
+
+        <section class="profile-actions">
+          <button type="button" class="btn btn-outline-danger" @click="deactivate">
+            <i class="bi bi-person-x me-1"></i>계정 비활성화
+          </button>
+          <button class="btn btn-success">
+            <i class="bi bi-save me-1"></i>변경사항 저장
+          </button>
+        </section>
       </form>
     </section>
 
@@ -911,161 +1244,373 @@ export default {
       </div>
     </section>
 
-    <section v-if="route === 'challenge'" class="layout-grid">
-      <div class="panel">
-        <div class="panel-body">
-          <div v-if="!challenges.length" class="empty-state">등록된 챌린지가 없습니다.</div>
-          <article v-for="challenge in challenges" :key="challenge.id" class="post-card">
-            <div class="section-head">
-              <div>
-                <span class="badge-soft">{{ challenge.category }}</span>
-                <h2>{{ challenge.title }}</h2>
-                <p class="muted mb-0">{{ challenge.description }}</p>
-              </div>
-              <button v-if="!memberships[challenge.id]" class="btn btn-outline-success btn-sm" @click="joinChallenge(challenge.id)">참여</button>
-            </div>
-            <div v-if="memberships[challenge.id]">
-              <div class="bar-track mb-2">
-                <div class="bar-fill" :style="{ width: Math.min(100, memberships[challenge.id].progress * 100 / challenge.targetCount) + '%' }"></div>
-              </div>
-              <input class="form-range" type="range" min="0" :max="challenge.targetCount" :value="memberships[challenge.id].progress" @change="updateChallengeProgress(challenge.id, $event.target.value)">
-              <div class="muted">{{ memberships[challenge.id].progress }} / {{ challenge.targetCount }}</div>
-            </div>
-          </article>
+    <section v-if="route === 'challenge'" class="challenge-page">
+      <div class="challenge-main">
+        <div class="challenge-header">
+          <div>
+            <div class="eyebrow">Health Challenges</div>
+            <h2>건강 챌린지</h2>
+            <p>함께해서 더 즐거운 건강한 목표 달성</p>
+          </div>
+          <button class="btn btn-success" @click="challengeCreateOpen = !challengeCreateOpen">
+            <i class="bi bi-plus-lg me-1"></i>새 챌린지 만들기
+          </button>
         </div>
+
+        <section class="challenge-section">
+          <div class="challenge-section-title">
+            <i class="bi bi-fire"></i>
+            <h3>진행 중인 챌린지</h3>
+          </div>
+          <div v-if="!joinedChallenges.length" class="challenge-empty">
+            아직 참여 중인 챌린지가 없습니다. 아래 추천 챌린지에서 참여할 수 있습니다.
+          </div>
+          <div v-else class="active-challenge-grid">
+            <article v-for="challenge in joinedChallenges" :key="challenge.id" class="active-challenge-card">
+              <div class="challenge-card-head">
+                <div class="challenge-title-row">
+                  <span class="challenge-icon"><i :class="['bi', challengeIconClass(challenge.category)]"></i></span>
+                  <div>
+                    <h4>{{ challenge.title }}</h4>
+                    <p>{{ challenge.description }}</p>
+                  </div>
+                </div>
+                <span class="challenge-dday">{{ challengeDday(challenge) }}</span>
+              </div>
+              <div class="challenge-progress-meta">
+                <span>진행률 {{ challengePercent(challenge) }}%</span>
+                <span>{{ challengeProgress(challenge) }} / {{ challenge.targetCount }}</span>
+              </div>
+              <div class="bar-track challenge-progress">
+                <div class="bar-fill" :style="{ width: challengePercent(challenge) + '%' }"></div>
+              </div>
+              <input class="form-range challenge-range" type="range" min="0" :max="challenge.targetCount" :value="challengeProgress(challenge)" @change="updateChallengeProgress(challenge.id, $event.target.value)">
+            </article>
+          </div>
+        </section>
+
+        <section class="challenge-section">
+          <div class="challenge-section-title justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-stars"></i>
+              <h3>추천 챌린지</h3>
+            </div>
+            <span class="muted">{{ availableChallenges.length }}개</span>
+          </div>
+          <div v-if="!challenges.length" class="challenge-empty">등록된 챌린지가 없습니다.</div>
+          <div v-else-if="!availableChallenges.length" class="challenge-empty">참여 가능한 새 챌린지가 없습니다.</div>
+          <div v-else class="challenge-card-grid">
+            <article v-for="challenge in availableChallenges" :key="challenge.id" class="challenge-card">
+              <div class="challenge-image" :class="['challenge-image-' + (challenge.category || 'default')]">
+                <i :class="['bi', challengeIconClass(challenge.category)]"></i>
+                <span><i class="bi bi-people"></i>{{ challengeParticipantCount(challenge) }}명</span>
+              </div>
+              <div class="challenge-card-body">
+                <span class="badge-soft">{{ challenge.category || '챌린지' }}</span>
+                <h4>{{ challenge.title }}</h4>
+                <p>{{ challenge.description }}</p>
+                <div class="challenge-card-foot">
+                  <span>{{ challengeDday(challenge) }}</span>
+                  <span>목표 {{ challenge.targetCount }}</span>
+                </div>
+                <button class="btn btn-outline-success w-100" @click="joinChallenge(challenge.id)">참여하기</button>
+              </div>
+            </article>
+          </div>
+        </section>
       </div>
-      <form class="panel" @submit.prevent="createChallenge">
-        <div class="panel-body d-grid gap-3">
-          <h2 class="section-subtitle">챌린지 생성</h2>
-          <input class="form-control" v-model="challengeForm.title" placeholder="제목" required>
-          <textarea class="form-control" v-model="challengeForm.description" rows="3" placeholder="설명"></textarea>
-          <input class="form-control" v-model="challengeForm.category" placeholder="분류">
-          <input class="form-control" v-model.number="challengeForm.targetCount" type="number" min="1">
-          <input class="form-control" v-model="challengeForm.endDate" type="date" required>
-          <button class="btn btn-success">생성</button>
+
+      <aside class="challenge-side">
+        <form class="panel challenge-create-panel" @submit.prevent="createChallenge" v-show="challengeCreateOpen || !challenges.length">
+          <div class="panel-body d-grid gap-3">
+            <h2 class="section-subtitle">챌린지 생성</h2>
+            <input class="form-control soft-input" v-model="challengeForm.title" placeholder="제목" required>
+            <textarea class="form-control soft-input" v-model="challengeForm.description" rows="3" placeholder="설명"></textarea>
+            <input class="form-control soft-input" v-model="challengeForm.category" placeholder="분류">
+            <div>
+              <label class="form-label">목표 횟수</label>
+              <input class="form-control soft-input" v-model.number="challengeForm.targetCount" type="number" min="1" placeholder="예: 7">
+            </div>
+            <input class="form-control soft-input" v-model="challengeForm.endDate" type="date" required>
+            <button class="btn btn-success">생성</button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <div class="panel-body">
+            <h2 class="section-subtitle">내 챌린지 요약</h2>
+            <div class="challenge-stat-list">
+              <div><span>참여 중</span><strong>{{ joinedChallenges.length }}</strong></div>
+              <div><span>참여 가능</span><strong>{{ availableChallenges.length }}</strong></div>
+              <div><span>전체</span><strong>{{ challenges.length }}</strong></div>
+            </div>
+          </div>
         </div>
-      </form>
+      </aside>
     </section>
 
-    <section v-if="route === 'community'" class="layout-grid">
-      <div class="panel">
-        <div class="panel-body">
-          <div class="section-head">
-            <h2>게시글</h2>
-            <select class="form-select w-auto" v-model="community.category" @change="loadCommunity">
-              <option value="all">전체</option>
-              <option value="meal">식단</option>
-              <option value="question">질문</option>
-              <option value="tip">팁</option>
-            </select>
-          </div>
-          <div v-if="!community.posts.length" class="empty-state">게시글이 없습니다.</div>
-          <article v-for="post in community.posts" :key="post.id" class="post-card">
-            <span class="badge-soft">{{ categoryLabel(post.category) }}</span>
-            <h2>{{ post.title }}</h2>
-            <p>{{ post.content }}</p>
-            <div class="muted mb-3">{{ authorName(post.userId) }} · {{ fmt(post.createdAt) }}</div>
-            <div class="insight-box mb-2" v-for="comment in community.comments[post.id] || []" :key="comment.id">
-              <strong>{{ authorName(comment.userId) }}</strong>
-              <div>{{ comment.content }}</div>
+    <section v-if="route === 'community'" class="community-page">
+      <div class="community-main">
+        <div class="community-filter-row">
+          <button type="button" :class="['community-filter-chip', community.category === 'all' && 'active']" @click="community.category = 'all'; loadCommunity()">전체</button>
+          <button type="button" :class="['community-filter-chip', community.category === 'meal' && 'active']" @click="community.category = 'meal'; loadCommunity()">식단공유</button>
+          <button type="button" :class="['community-filter-chip', community.category === 'question' && 'active']" @click="community.category = 'question'; loadCommunity()">질문</button>
+          <button type="button" :class="['community-filter-chip', community.category === 'tip' && 'active']" @click="community.category = 'tip'; loadCommunity()">팁</button>
+        </div>
+
+        <form class="community-compose" @submit.prevent="createPost">
+          <div :class="['avatar', 'compact', toneClass(displayName)]">{{ displayName.slice(0, 1) }}</div>
+          <div class="community-compose-body">
+            <div class="compose-grid">
+              <select class="form-select soft-input" v-model="postForm.category">
+                <option value="meal">식단</option>
+                <option value="question">질문</option>
+                <option value="tip">팁</option>
+              </select>
+              <select class="form-select soft-input" v-model="postForm.linkedMealId">
+                <option value="">연결 식단 없음</option>
+                <option v-for="meal in meals" :key="meal.id" :value="meal.id">{{ meal.mealDate }} {{ mealLabel(meal.mealType) }}</option>
+              </select>
             </div>
-            <form class="input-group" @submit.prevent="createComment(post.id)">
-              <input class="form-control" v-model="commentDrafts[post.id]" placeholder="댓글">
+            <input class="form-control soft-input" v-model="postForm.title" placeholder="제목" required>
+            <textarea class="form-control soft-input" v-model="postForm.content" rows="3" placeholder="오늘 어떤 건강한 이야기를 나누고 싶으신가요?" required></textarea>
+            <div class="d-flex justify-content-end">
+              <button class="btn btn-success">
+                <i class="bi bi-send me-1"></i>게시
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <div class="community-feed">
+          <div v-if="!community.posts.length" class="panel">
+            <div class="empty-state">게시글이 없습니다.</div>
+          </div>
+          <article v-for="post in community.posts" :key="post.id" class="community-post-card">
+            <div class="community-post-head">
+              <div class="d-flex align-items-center gap-2">
+                <span :class="['avatar', 'compact', toneClass(authorName(post.userId))]">{{ authorName(post.userId).slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ authorName(post.userId) }}</strong>
+                  <div class="muted">{{ fmt(post.createdAt) }}</div>
+                </div>
+              </div>
+              <span :class="['badge-soft', 'community-category-badge', categoryClass(post.category)]">{{ categoryLabel(post.category) }}</span>
+            </div>
+            <h2>{{ post.title }}</h2>
+            <p class="community-post-content">{{ post.content }}</p>
+
+            <div v-if="linkedMeal(post)" class="linked-meal-card">
+              <div class="linked-meal-icon"><i class="bi bi-egg-fried"></i></div>
+              <div>
+                <strong>{{ mealFoodNames(linkedMeal(post)) }}</strong>
+                <div class="muted">{{ linkedMeal(post).mealDate }} · {{ mealLabel(linkedMeal(post).mealType) }}</div>
+              </div>
+              <strong class="text-primary">{{ mealCalories(linkedMeal(post)) }} kcal</strong>
+            </div>
+
+            <div class="comment-list" v-if="(community.comments[post.id] || []).length">
+              <div class="comment-row" v-for="comment in community.comments[post.id] || []" :key="comment.id">
+                <span :class="['avatar', 'mini', toneClass(authorName(comment.userId))]">{{ authorName(comment.userId).slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ authorName(comment.userId) }}</strong>
+                  <p>{{ comment.content }}</p>
+                </div>
+              </div>
+            </div>
+
+            <form class="comment-form" @submit.prevent="createComment(post.id)">
+              <input class="form-control" v-model="commentDrafts[post.id]" placeholder="댓글을 입력하세요">
               <button class="btn btn-outline-success">등록</button>
             </form>
           </article>
         </div>
       </div>
-      <form class="panel" @submit.prevent="createPost">
-        <div class="panel-body d-grid gap-3">
-          <h2 class="section-subtitle">글 작성</h2>
-          <select class="form-select" v-model="postForm.category">
-            <option value="meal">식단</option>
-            <option value="question">질문</option>
-            <option value="tip">팁</option>
-          </select>
-          <select class="form-select" v-model="postForm.linkedMealId">
-            <option value="">연결 식단 없음</option>
-            <option v-for="meal in meals" :key="meal.id" :value="meal.id">{{ meal.mealDate }} {{ mealLabel(meal.mealType) }}</option>
-          </select>
-          <input class="form-control" v-model="postForm.title" placeholder="제목" required>
-          <textarea class="form-control" v-model="postForm.content" rows="5" placeholder="내용" required></textarea>
-          <button class="btn btn-success">게시</button>
+
+      <aside class="community-side">
+        <div class="panel">
+          <div class="panel-body">
+            <div class="section-head"><h2><i class="bi bi-info-circle text-primary"></i> 커뮤니티</h2></div>
+            <p class="muted mb-0">식단 공유, 질문, 팁 게시글을 확인하고 댓글로 의견을 나눌 수 있습니다.</p>
+          </div>
         </div>
-      </form>
+        <div class="panel">
+          <div class="panel-body">
+            <div class="section-head"><h2><i class="bi bi-link-45deg text-primary"></i> 연결 가능 식단</h2></div>
+            <div v-if="!meals.length" class="empty-state compact-empty">연결할 식단이 없습니다.</div>
+            <div v-for="meal in filteredMeals.slice(0, 3)" :key="meal.id" class="side-meal-row">
+              <span :class="['badge-soft', 'meal-type-badge', mealTypeClass(meal.mealType)]">{{ mealLabel(meal.mealType) }}</span>
+              <div>
+                <strong>{{ meal.mealDate }}</strong>
+                <div class="muted">{{ mealCalories(meal) }} kcal</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
     </section>
 
-    <section v-if="route === 'coach'" class="two-grid">
-      <form class="panel" @submit.prevent="askCoach">
-        <div class="panel-body d-grid gap-3">
-          <h2 class="section-subtitle">AI 코치 질문</h2>
-          <select class="form-select" v-model="coachForm.mealId">
-            <option value="">최근 식단 전체</option>
-            <option v-for="meal in meals" :key="meal.id" :value="meal.id">{{ meal.mealDate }} {{ mealLabel(meal.mealType) }}</option>
-          </select>
-          <textarea class="form-control" v-model="coachForm.question" rows="5"></textarea>
-          <button class="btn btn-success">조언 받기</button>
-        </div>
-      </form>
-      <div class="panel">
-        <div class="panel-body">
-          <h2 class="section-subtitle">응답</h2>
-          <div class="d-flex gap-2 mb-3" v-if="advice">
-            <span class="badge-soft">{{ advice.provider }}</span>
-            <span class="badge-soft badge-accent" v-if="advice.springAiUsed">Spring AI</span>
+    <section v-if="route === 'coach'" class="coach-page">
+      <aside class="coach-input-stack">
+        <div class="coach-page-copy">
+          <h2>AI 코치</h2>
+          <p>선택한 식단 또는 최근 식단을 바탕으로 개선 조언을 요청합니다.</p>
+          <div class="coach-version-tabs">
+            <button type="button" class="active" @click="go('/coach')">V1 기본 코치</button>
+            <button type="button" @click="go('/coach-v2')">V2 도구 연동</button>
           </div>
-          <div class="api-result" v-if="advice">{{ advice.advice }}</div>
-          <div class="empty-state" v-else>질문을 보내면 코치 응답이 표시됩니다.</div>
+        </div>
+
+        <form class="coach-card" @submit.prevent="askCoach">
+          <div class="section-head">
+            <h2><i class="bi bi-sliders text-primary"></i> 질문 설정</h2>
+          </div>
+          <div class="d-grid gap-3">
+            <div>
+              <label class="form-label">컨텍스트 식단</label>
+              <select class="form-select soft-input" v-model="coachForm.mealId">
+                <option value="">최근 식단 전체</option>
+                <option v-for="meal in meals" :key="meal.id" :value="meal.id">{{ meal.mealDate }} {{ mealLabel(meal.mealType) }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">질문</label>
+              <textarea class="form-control soft-input coach-question" v-model="coachForm.question" rows="6" placeholder="예: 최근 식단에서 개선할 점을 알려줘."></textarea>
+            </div>
+            <button class="btn btn-success btn-lg" :disabled="coachLoading">
+              <span v-if="coachLoading" class="spinner-border spinner-border-sm me-2"></span>
+              {{ coachLoading ? "분석 중..." : "조언 받기" }} <i v-if="!coachLoading" class="bi bi-send ms-1"></i>
+            </button>
+          </div>
+        </form>
+      </aside>
+
+      <div class="coach-response-stack">
+        <div class="coach-loading-card" v-if="coachLoading">
+          <span class="spinner-border text-success"></span>
+          <h3>코치가 식단을 분석 중입니다</h3>
+          <p>요청한 식단과 질문을 바탕으로 조언을 생성하고 있어요.</p>
+        </div>
+        <div class="coach-response-card" v-else-if="advice">
+          <div class="coach-response-head">
+            <span class="coach-bot-icon"><i class="bi bi-robot"></i></span>
+            <div>
+              <h3>YamYam 코치</h3>
+              <div class="d-flex flex-wrap gap-2 mt-1">
+                <span class="badge-soft">{{ advice.provider }}</span>
+                <span class="badge-soft badge-accent" v-if="advice.springAiUsed">Spring AI</span>
+              </div>
+            </div>
+          </div>
+          <div class="coach-answer">{{ advice.advice }}</div>
+        </div>
+        <div class="coach-empty" v-else>
+          <i class="bi bi-stars"></i>
+          <h3>코칭 응답 대기 중</h3>
+          <p>질문을 보내면 식단 기반 조언이 이곳에 표시됩니다.</p>
         </div>
       </div>
     </section>
 
-    <section v-if="route === 'coachV2'" class="two-grid">
-      <form class="panel" @submit.prevent="askCoachV2">
-        <div class="panel-body d-grid gap-3">
-          <h2 class="section-subtitle">AI 코치 V2</h2>
-          <div class="row g-2">
-            <div class="col"><label class="form-label">날짜</label><input class="form-control" v-model="coachV2Form.date" type="date"></div>
-            <div class="col"><label class="form-label">도시</label><input class="form-control" v-model="coachV2Form.city" placeholder="Seoul"></div>
+    <section v-if="route === 'coachV2'" class="coach-page coach-page-v2">
+      <aside class="coach-input-stack">
+        <div class="coach-page-copy">
+          <h2>AI 코치 V2</h2>
+          <p>날짜, 도시, 실행 모드를 함께 전달해 도구 연동 코칭을 요청합니다.</p>
+          <div class="coach-version-tabs">
+            <button type="button" @click="go('/coach')">V1 기본 코치</button>
+            <button type="button" class="active" @click="go('/coach-v2')">V2 도구 연동</button>
           </div>
-          <select class="form-select" v-model="coachV2Form.mode">
-            <option value="multi">다중 Tool 연쇄</option>
-            <option value="llm-driven">LLM 주도 Tool 선택</option>
-          </select>
-          <textarea class="form-control" v-model="coachV2Form.question" rows="5"></textarea>
-          <button class="btn btn-success">코칭 요청</button>
         </div>
-      </form>
-      <div class="panel">
-        <div class="panel-body">
-          <h2 class="section-subtitle">V2 응답</h2>
-          <template v-if="adviceV2">
-            <div class="d-flex flex-wrap gap-2 mb-3">
-              <span class="badge-soft badge-accent">{{ adviceV2.mode }}</span>
-              <span class="badge-soft">{{ adviceV2.provider }}</span>
-              <span class="badge-soft" v-if="adviceV2.springAiUsed">Spring AI</span>
+
+        <form class="coach-card" @submit.prevent="askCoachV2">
+          <div class="section-head">
+            <h2><i class="bi bi-toggles text-primary"></i> 코치 설정</h2>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">분석 기준일</label>
+              <input class="form-control soft-input" v-model="coachV2Form.date" type="date">
             </div>
-            <div class="api-result mb-3">{{ adviceV2.answer }}</div>
-            <div v-if="adviceV2Plan.length">
-              <h3 class="section-subtitle">실행 계획</h3>
-              <ol class="muted ps-3"><li v-for="step in adviceV2Plan" :key="step">{{ step }}</li></ol>
+            <div class="col-md-6">
+              <label class="form-label">도시</label>
+              <input class="form-control soft-input" v-model="coachV2Form.city" placeholder="Seoul">
             </div>
-            <div v-if="adviceV2ToolResults.length">
-              <h3 class="section-subtitle mt-3">Tool 실행 결과</h3>
-              <div v-for="tool in adviceV2ToolResults" :key="tool.toolName + tool.summary" class="insight-box mb-2">
-                <div class="d-flex justify-content-between">
-                  <strong>{{ tool.toolName }}</strong>
-                  <span :class="tool.success ? 'badge-soft badge-accent' : 'badge-soft badge-danger-soft'">{{ tool.success ? '성공' : '실패' }}</span>
-                </div>
-                <div class="muted mt-1">{{ tool.summary }}</div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">실행 모드</label>
+            <select class="form-select soft-input" v-model="coachV2Form.mode">
+              <option value="multi">다중 Tool 연쇄</option>
+              <option value="llm-driven">LLM 주도 Tool 선택</option>
+            </select>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">질문</label>
+            <textarea class="form-control soft-input coach-question" v-model="coachV2Form.question" rows="6" placeholder="예: 오늘 날씨와 내 식단을 바탕으로 저녁 식사와 운동을 추천해줘."></textarea>
+          </div>
+          <button class="btn btn-success btn-lg w-100 mt-3" :disabled="coachV2Loading">
+            <span v-if="coachV2Loading" class="spinner-border spinner-border-sm me-2"></span>
+            {{ coachV2Loading ? "코칭 진행 중..." : "코칭 요청" }} <i v-if="!coachV2Loading" class="bi bi-send ms-1"></i>
+          </button>
+        </form>
+      </aside>
+
+      <div class="coach-response-stack">
+        <div class="coach-process-strip" v-if="coachV2Loading || adviceV2">
+          <span><i class="bi bi-check-circle"></i> 요청 완료</span>
+          <span><i :class="coachV2Loading ? 'bi bi-arrow-repeat' : 'bi bi-check-circle'"></i> {{ coachV2Form.mode }}</span>
+          <span><i class="bi bi-stars"></i> {{ coachV2Loading ? "응답 생성 중" : "응답 생성 완료" }}</span>
+        </div>
+        <div class="coach-loading-card" v-if="coachV2Loading">
+          <span class="spinner-border text-success"></span>
+          <h3>V2 코칭을 진행 중입니다</h3>
+          <p>날짜, 도시, 실행 모드를 바탕으로 도구 연동 결과를 생성하고 있어요.</p>
+        </div>
+        <div class="coach-response-card" v-else-if="adviceV2">
+          <div class="coach-response-head">
+            <span class="coach-bot-icon"><i class="bi bi-cpu"></i></span>
+            <div>
+              <h3>YamYam 코치 V2</h3>
+              <div class="d-flex flex-wrap gap-2 mt-1">
+                <span class="badge-soft badge-accent">{{ adviceV2.mode }}</span>
+                <span class="badge-soft">{{ adviceV2.provider }}</span>
+                <span class="badge-soft" v-if="adviceV2.springAiUsed">Spring AI</span>
               </div>
             </div>
-          </template>
-          <div class="empty-state" v-else>코칭 요청을 보내면 결과가 표시됩니다.</div>
+          </div>
+          <div class="coach-answer mb-3">{{ adviceV2.answer }}</div>
+          <div v-if="adviceV2Plan.length" class="coach-subsection">
+            <h4>실행 계획</h4>
+            <ol>
+              <li v-for="step in adviceV2Plan" :key="step">{{ step }}</li>
+            </ol>
+          </div>
+          <div v-if="adviceV2ToolResults.length" class="coach-subsection">
+            <h4>Tool 실행 결과</h4>
+            <div v-for="tool in adviceV2ToolResults" :key="tool.toolName + tool.summary" class="tool-result-card">
+              <div class="d-flex justify-content-between gap-2">
+                <strong>{{ tool.toolName }}</strong>
+                <span :class="tool.success ? 'badge-soft badge-accent' : 'badge-soft badge-danger-soft'">{{ tool.success ? '성공' : '실패' }}</span>
+              </div>
+              <div class="muted mt-1">{{ tool.summary }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="coach-empty" v-else>
+          <i class="bi bi-magic"></i>
+          <h3>V2 코칭 응답 대기 중</h3>
+          <p>코칭 요청을 보내면 결과와 실행 정보가 이곳에 표시됩니다.</p>
         </div>
       </div>
     </section>
   </main>
+  <nav class="mobile-bottom-nav">
+    <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')"><i class="bi bi-house"></i><span>Home</span></a>
+    <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')"><i class="bi bi-clock-history"></i><span>History</span></a>
+    <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')"><i class="bi bi-robot"></i><span>Coach</span></a>
+    <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')"><i class="bi bi-cpu"></i><span>V2</span></a>
+    <a :class="navClass('/profile')" href="/profile" @click.prevent="go('/profile')"><i class="bi bi-person"></i><span>Profile</span></a>
+  </nav>
   <div v-if="toast" class="toast-line">{{ toast }}</div>
 </div>
 </template>
