@@ -91,6 +91,7 @@ export default {
       social: { following: [], followers: [], suggestions: [], leaderboard: [] },
       community: { posts: [], comments: {}, authors: {}, category: "all" },
       reports: [],
+      reportSummary: { pdfCount: 0 },
       analysis: null,
       advice: null,
       adviceV2: null,
@@ -538,7 +539,12 @@ export default {
       this.community = { ...data, category };
     },
     async loadReports() {
-      this.reports = await api.get(`/api/reports?userId=${encodeURIComponent(this.user.id)}`);
+      const [reports, summary] = await Promise.all([
+        api.get(`/api/reports?userId=${encodeURIComponent(this.user.id)}`),
+        api.get("/api/reports/summary")
+      ]);
+      this.reports = reports;
+      this.reportSummary = summary || { pdfCount: reports.filter(report => report.hasPdf).length };
     },
     async runDailyAnalysis() {
       if (this.reportGenerating) return;
@@ -1545,7 +1551,7 @@ export default {
             <h2 class="section-subtitle">생성 기준</h2>
             <div class="summary-stack">
               <div class="summary-row"><span>분석 대상</span><strong>전날</strong></div>
-              <div class="summary-row"><span>PDF</span><strong>{{ reports.filter(report => report.hasPdf).length }}</strong></div>
+              <div class="summary-row"><span>PDF</span><strong>{{ reportSummary.pdfCount }}</strong></div>
             </div>
           </div>
         </div>
