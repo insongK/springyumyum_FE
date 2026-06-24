@@ -98,6 +98,7 @@ export default {
       coachLoading: false,
       coachV2Loading: false,
       reportGenerating: false,
+      reportResetting: false,
       mealFilters: { startDate: "", endDate: "", mealType: "", sortKey: "dateDesc" },
       loginForm: { email: "demo@yamyam.com", password: "Demo1234!" },
       signupForm: {
@@ -541,7 +542,7 @@ export default {
     async loadReports() {
       const [reports, summary] = await Promise.all([
         api.get(`/api/reports?userId=${encodeURIComponent(this.user.id)}`),
-        api.get("/api/reports/summary")
+        api.get(`/api/reports/summary?userId=${encodeURIComponent(this.user.id)}`)
       ]);
       this.reports = reports;
       this.reportSummary = summary || { pdfCount: reports.filter(report => report.hasPdf).length };
@@ -559,9 +560,51 @@ export default {
         this.reportGenerating = false;
       }
     },
-    downloadReport(report) {
+    async downloadReport(report) {
       if (!report || !report.pdfUrl) return;
-      location.href = `${API_BASE_URL}${report.pdfUrl}`;
+      try {
+        const response = await fetch(`${API_BASE_URL}${report.pdfUrl}`, { credentials: "include" });
+        if (!response.ok) {
+          let message = response.statusText || "PDF 다운로드에 실패했습니다.";
+          try {
+            const error = await response.json();
+            message = error.message || error.error || error.detail || message;
+          } catch (e) {
+            // Keep the HTTP status text when the server returns a non-JSON error body.
+          }
+          throw new Error(message);
+        }
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.toLowerCase().includes("application/pdf")) {
+          throw new Error("서버가 PDF 파일을 반환하지 않았습니다. 리포트를 다시 생성해 주세요.");
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${report.userId || this.user.id}-${report.analysisDate}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        this.notify(error.message);
+      }
+    },
+    async resetReports() {
+      if (this.reportResetting || !this.user) return;
+      if (!confirm("현재 계정의 생성된 일일 식단 리포트와 PDF를 모두 삭제할까요?")) return;
+      this.reportResetting = true;
+      try {
+        await api.delete(`/api/reports?userId=${encodeURIComponent(this.user.id)}`);
+        this.reports = [];
+        this.reportSummary = { pdfCount: 0 };
+        this.notify("일일 식단 리포트를 초기화했습니다. 다시 생성해 주세요.");
+      } catch (error) {
+        this.notify(error.message);
+      } finally {
+        this.reportResetting = false;
+      }
     },
     async createPost() {
       const data = await api.post("/api/community/posts", { ...this.postForm, userId: this.user.id });
@@ -1509,10 +1552,16 @@ export default {
             <div class="eyebrow">Batch Report</div>
             <h2>일일 식단 리포트</h2>
           </div>
-          <button class="btn btn-success" :disabled="reportGenerating" @click="runDailyAnalysis">
-            <span v-if="reportGenerating" class="spinner-border spinner-border-sm me-2"></span>
-            <i v-else class="bi bi-play-fill me-1"></i>{{ reportGenerating ? '생성 중...' : '리포트 생성' }}
-          </button>
+          <div class="report-action-buttons">
+            <button class="btn btn-outline-danger" :disabled="reportGenerating || reportResetting" @click="resetReports">
+              <span v-if="reportResetting" class="spinner-border spinner-border-sm me-2"></span>
+              <i v-else class="bi bi-trash me-1"></i>{{ reportResetting ? '초기화 중...' : '리포트 초기화' }}
+            </button>
+            <button class="btn btn-success" :disabled="reportGenerating || reportResetting" @click="runDailyAnalysis">
+              <span v-if="reportGenerating" class="spinner-border spinner-border-sm me-2"></span>
+              <i v-else class="bi bi-play-fill me-1"></i>{{ reportGenerating ? '생성 중...' : '리포트 생성' }}
+            </button>
+          </div>
         </div>
 
         <div v-if="reportGenerating" class="report-loading">
