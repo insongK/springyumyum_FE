@@ -68,7 +68,8 @@ const routes = {
   "/challenge": "challenge",
   "/community": "community",
   "/coach": "coach",
-  "/coach-v2": "coachV2"
+  "/coach-v2": "coachV2",
+  "/reports": "reports"
 };
 
 export default {
@@ -89,11 +90,13 @@ export default {
       participants: {},
       social: { following: [], followers: [], suggestions: [], leaderboard: [] },
       community: { posts: [], comments: {}, authors: {}, category: "all" },
+      reports: [],
       analysis: null,
       advice: null,
       adviceV2: null,
       coachLoading: false,
       coachV2Loading: false,
+      reportGenerating: false,
       mealFilters: { startDate: "", endDate: "", mealType: "", sortKey: "dateDesc" },
       loginForm: { email: "demo@yamyam.com", password: "Demo1234!" },
       signupForm: {
@@ -147,7 +150,8 @@ export default {
         challenge: "챌린지",
         community: "커뮤니티",
         coach: "AI 코치",
-        coachV2: "AI 코치 V2"
+        coachV2: "AI 코치 V2",
+        reports: "리포트"
       }[this.route] || "YamYam Coach";
     },
     todaySummary() {
@@ -308,6 +312,7 @@ export default {
         if (this.route === "social") await this.loadSocial();
         if (["challenge", "home", "coach"].includes(this.route)) await this.loadChallenges();
         if (this.route === "community") await this.loadCommunity();
+        if (this.route === "reports") await this.loadReports();
       } catch (error) {
         this.notify(error.message);
       } finally {
@@ -532,6 +537,26 @@ export default {
       const data = await api.get(`/api/community?category=${encodeURIComponent(category)}`);
       this.community = { ...data, category };
     },
+    async loadReports() {
+      this.reports = await api.get(`/api/reports?userId=${encodeURIComponent(this.user.id)}`);
+    },
+    async runDailyAnalysis() {
+      if (this.reportGenerating) return;
+      this.reportGenerating = true;
+      try {
+        await api.post("/api/reports/daily-analysis/run", {});
+        await this.loadReports();
+        this.notify("리포트를 생성했습니다.");
+      } catch (error) {
+        this.notify(error.message);
+      } finally {
+        this.reportGenerating = false;
+      }
+    },
+    downloadReport(report) {
+      if (!report || !report.pdfUrl) return;
+      location.href = `${API_BASE_URL}${report.pdfUrl}`;
+    },
     async createPost() {
       const data = await api.post("/api/community/posts", { ...this.postForm, userId: this.user.id });
       this.community = { ...data, category: "all" };
@@ -711,6 +736,7 @@ export default {
         <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')">AI Coach</a>
         <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')">AI Coach V2</a>
         <a :class="navClass('/challenge')" href="/challenge" @click.prevent="go('/challenge')">Challenge</a>
+        <a :class="navClass('/reports')" href="/reports" @click.prevent="go('/reports')">Reports</a>
       </nav>
       <div class="nav-actions">
         <button class="btn btn-success btn-sm" @click="go('/meals/new')">
@@ -1349,6 +1375,62 @@ export default {
       </aside>
     </section>
 
+    <section v-if="route === 'reports'" class="reports-page">
+      <div class="reports-main">
+        <div class="report-action-panel">
+          <div>
+            <div class="eyebrow">Batch Report</div>
+            <h2>일일 식단 리포트</h2>
+          </div>
+          <button class="btn btn-success" :disabled="reportGenerating" @click="runDailyAnalysis">
+            <span v-if="reportGenerating" class="spinner-border spinner-border-sm me-2"></span>
+            <i v-else class="bi bi-play-fill me-1"></i>{{ reportGenerating ? '생성 중...' : '리포트 생성' }}
+          </button>
+        </div>
+
+        <div v-if="reportGenerating" class="report-loading">
+          <span class="spinner-border spinner-border-sm text-success"></span>
+          <strong>리포트를 생성 중입니다.</strong>
+          <span>전날 식단 분석과 PDF 생성이 끝나면 목록이 자동으로 갱신됩니다.</span>
+        </div>
+
+        <div v-if="!reports.length" class="challenge-empty">
+          아직 생성된 리포트가 없습니다. 전날 식단 기록이 있다면 리포트 생성을 실행해 보세요.
+        </div>
+
+        <article v-for="report in reports" :key="report.analysisDate" class="report-card">
+          <div class="report-card-head">
+            <div>
+              <span class="badge-soft">{{ report.analysisDate }}</span>
+              <h3>{{ report.analysisDate }} 식단 분석</h3>
+            </div>
+            <button class="btn btn-outline-success btn-sm" :disabled="!report.hasPdf" @click="downloadReport(report)">
+              <i class="bi bi-download me-1"></i>PDF 다운로드
+            </button>
+          </div>
+          <div class="report-metrics">
+            <div class="report-metric-calories"><span>칼로리</span><strong>{{ Math.round(report.totalCalories) }} kcal</strong></div>
+            <div class="report-metric-carbs"><span>탄수화물</span><strong>{{ Math.round(report.totalCarbs) }}g</strong></div>
+            <div class="report-metric-protein"><span>단백질</span><strong>{{ Math.round(report.totalProtein) }}g</strong></div>
+            <div class="report-metric-fat"><span>지방</span><strong>{{ Math.round(report.totalFat) }}g</strong></div>
+          </div>
+          <div class="report-summary">{{ report.aiSummary || '분석 요약이 없습니다.' }}</div>
+        </article>
+      </div>
+
+      <aside class="reports-side">
+        <div class="panel">
+          <div class="panel-body">
+            <h2 class="section-subtitle">생성 기준</h2>
+            <div class="summary-stack">
+              <div class="summary-row"><span>분석 대상</span><strong>전날</strong></div>
+              <div class="summary-row"><span>PDF</span><strong>{{ reports.filter(report => report.hasPdf).length }}</strong></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
     <section v-if="route === 'community'" class="community-page">
       <div class="community-main">
         <div class="community-filter-row">
@@ -1608,7 +1690,7 @@ export default {
     <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')"><i class="bi bi-house"></i><span>Home</span></a>
     <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')"><i class="bi bi-clock-history"></i><span>History</span></a>
     <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')"><i class="bi bi-robot"></i><span>Coach</span></a>
-    <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')"><i class="bi bi-cpu"></i><span>V2</span></a>
+    <a :class="navClass('/reports')" href="/reports" @click.prevent="go('/reports')"><i class="bi bi-file-earmark-pdf"></i><span>Reports</span></a>
     <a :class="navClass('/profile')" href="/profile" @click.prevent="go('/profile')"><i class="bi bi-person"></i><span>Profile</span></a>
   </nav>
   <div v-if="toast" class="toast-line">{{ toast }}</div>
