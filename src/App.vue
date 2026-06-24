@@ -669,7 +669,128 @@ export default {
 
 <template>
 
-<div v-if="route === 'login' || route === 'signup'" class="auth-page">
+<div v-if="route === 'login' || route === 'signup'" class="auth-page auth-page-modern">
+  <div class="auth-layout">
+    <section class="auth-brand-panel">
+      <div class="auth-brand-content">
+        <div class="eyebrow">YamYam Coach</div>
+        <h1>식단 한 장으로 완성되는 데이터 분석</h1>
+        <p>당신의 일상을 더 가볍고 건강하게. 나만의 페이스에 맞춘 스마트한 식단 관리를 시작해보세요.</p>
+
+        <div class="auth-coach-card">
+          <div class="auth-coach-head">
+            <div class="auth-coach-icon"><i class="bi bi-stars"></i></div>
+            <div>
+              <span>AI Coach</span>
+              <strong>식단 피드백</strong>
+            </div>
+          </div>
+          <div class="auth-chat-preview">
+            <p class="auth-chat-user">오늘 식단을 기록했어요.</p>
+            <p class="auth-chat-ai">기록한 식단을 바탕으로 균형과 개선점을 정리해드릴게요.</p>
+          </div>
+          <div class="auth-coach-tags">
+            <span>식단 기록</span>
+            <span>AI 분석</span>
+            <span>리포트 확인</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="auth-panel" v-if="route === 'login'">
+      <div class="auth-form-card">
+        <div class="auth-mobile-brand">YamYam Coach</div>
+        <div class="auth-form-header">
+          <h2>로그인</h2>
+          <p>계정에 로그인해 식단과 리포트를 확인하세요.</p>
+        </div>
+        <form @submit.prevent="login" class="auth-form-stack">
+          <label class="auth-field">
+            <span>이메일</span>
+            <input v-model="loginForm.email" type="email" placeholder="hello@example.com" required>
+          </label>
+          <label class="auth-field">
+            <span>비밀번호</span>
+            <input v-model="loginForm.password" type="password" placeholder="비밀번호" required>
+          </label>
+          <button class="auth-primary-btn" type="submit">로그인</button>
+          <button type="button" class="auth-secondary-btn" @click="go('/auth/signup')">회원가입</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="auth-panel" v-else>
+      <div class="auth-form-card auth-signup-card">
+        <div class="auth-mobile-brand">YamYam Coach</div>
+        <div class="auth-form-header">
+          <h2>회원가입</h2>
+          <p>건강한 여정을 시작하기 위해 정보를 입력해 주세요.</p>
+        </div>
+        <form @submit.prevent="signup" class="auth-form-stack">
+          <label class="auth-field">
+            <span>이메일</span>
+            <input v-model="signupForm.email" type="email" placeholder="hello@example.com" required>
+          </label>
+          <label class="auth-field">
+            <span>비밀번호</span>
+            <input v-model="signupForm.password" type="password" placeholder="비밀번호" required>
+          </label>
+          <label class="auth-field">
+            <span>닉네임</span>
+            <input v-model="signupForm.nickname" placeholder="야미야미" required>
+          </label>
+
+          <div class="auth-form-grid">
+            <label class="auth-field">
+              <span>성별</span>
+              <select v-model="signupForm.gender">
+                <option value="female">여성</option>
+                <option value="male">남성</option>
+              </select>
+            </label>
+            <label class="auth-field">
+              <span>출생연도</span>
+              <input v-model.number="signupForm.birthYear" type="number" placeholder="YYYY">
+            </label>
+          </div>
+
+          <div class="auth-form-grid">
+            <label class="auth-field auth-unit-field">
+              <span>키</span>
+              <input v-model.number="signupForm.height" type="number" step="0.1" placeholder="0">
+              <em>cm</em>
+            </label>
+            <label class="auth-field auth-unit-field">
+              <span>몸무게</span>
+              <input v-model.number="signupForm.weight" type="number" step="0.1" placeholder="0">
+              <em>kg</em>
+            </label>
+          </div>
+
+          <div class="auth-field">
+            <span>목표</span>
+            <div class="auth-goal-grid" role="group" aria-label="목표">
+              <button type="button" :class="['auth-goal-option', signupForm.goal === 'loss' ? 'active' : '']" @click="signupForm.goal = 'loss'">감량</button>
+              <button type="button" :class="['auth-goal-option', signupForm.goal === 'maintain' ? 'active' : '']" @click="signupForm.goal = 'maintain'">유지</button>
+              <button type="button" :class="['auth-goal-option', signupForm.goal === 'gain' ? 'active' : '']" @click="signupForm.goal = 'gain'">증량</button>
+            </div>
+          </div>
+
+          <label class="auth-field">
+            <span>건강 메모</span>
+            <textarea v-model="signupForm.healthNote" rows="3" placeholder="특이사항이나 알레르기 등을 적어주세요."></textarea>
+          </label>
+          <button class="auth-primary-btn" type="submit">가입하고 시작</button>
+          <button type="button" class="auth-secondary-btn" @click="go('/auth/login')">로그인으로 이동</button>
+        </form>
+      </div>
+    </section>
+  </div>
+  <div v-if="toast" class="toast-line">{{ toast }}</div>
+</div>
+
+<div v-else-if="false && (route === 'login' || route === 'signup')" class="auth-page">
   <div class="auth-grid">
     <section class="auth-copy">
       <div class="eyebrow">YamYam Coach</div>
