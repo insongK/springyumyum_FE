@@ -579,6 +579,9 @@ export default {
           throw new Error("서버가 PDF 파일을 반환하지 않았습니다. 리포트를 다시 생성해 주세요.");
         }
         const blob = await response.blob();
+        if (!blob.size) {
+          throw new Error("PDF 파일이 비어 있습니다. 리포트를 초기화한 뒤 다시 생성해 주세요.");
+        }
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
