@@ -60,6 +60,7 @@ const routes = {
   "/auth/login": "login",
   "/auth/signup": "signup",
   "/meals": "meals",
+  "/reports": "reports",
   "/meals/new": "mealForm",
   "/meals/edit": "mealForm",
   "/meals/detail": "mealDetail",
@@ -69,7 +70,6 @@ const routes = {
   "/community": "community",
   "/coach": "coach",
   "/coach-v2": "coachV2",
-  "/reports": "reports"
 };
 
 export default {
@@ -90,14 +90,14 @@ export default {
       participants: {},
       social: { following: [], followers: [], suggestions: [], leaderboard: [] },
       community: { posts: [], comments: {}, authors: {}, category: "all" },
-      reports: [],
       analysis: null,
       advice: null,
       adviceV2: null,
       coachLoading: false,
       coachV2Loading: false,
-      reportGenerating: false,
+      reportLoading: false,
       mealFilters: { startDate: "", endDate: "", mealType: "", sortKey: "dateDesc" },
+      reportForm: { date: new Date().toISOString().slice(0, 10) },
       loginForm: { email: "demo@yamyam.com", password: "Demo1234!" },
       signupForm: {
         email: "",
@@ -146,12 +146,12 @@ export default {
         mealForm: this.mealForm.id ? "식단 수정" : "식단 등록",
         mealDetail: "식단 상세",
         profile: "프로필",
+        reports: "Reports",
         social: "소셜",
         challenge: "챌린지",
         community: "커뮤니티",
         coach: "AI 코치",
         coachV2: "AI 코치 V2",
-        reports: "리포트"
       }[this.route] || "YamYam Coach";
     },
     todaySummary() {
@@ -303,7 +303,7 @@ export default {
       if (!this.requireAuth()) return;
       this.loading = true;
       try {
-        if (["home", "meals", "mealDetail", "mealForm", "profile", "community", "coach", "coachV2"].includes(this.route)) {
+        if (["home", "meals", "mealDetail", "mealForm", "profile", "community", "coach", "coachV2", "reports"].includes(this.route)) {
           await this.loadMeals();
         }
         if (this.route === "mealForm") await this.prepareMealForm();
@@ -312,7 +312,6 @@ export default {
         if (this.route === "social") await this.loadSocial();
         if (["challenge", "home", "coach"].includes(this.route)) await this.loadChallenges();
         if (this.route === "community") await this.loadCommunity();
-        if (this.route === "reports") await this.loadReports();
       } catch (error) {
         this.notify(error.message);
       } finally {
@@ -537,26 +536,6 @@ export default {
       const data = await api.get(`/api/community?category=${encodeURIComponent(category)}`);
       this.community = { ...data, category };
     },
-    async loadReports() {
-      this.reports = await api.get(`/api/reports?userId=${encodeURIComponent(this.user.id)}`);
-    },
-    async runDailyAnalysis() {
-      if (this.reportGenerating) return;
-      this.reportGenerating = true;
-      try {
-        await api.post("/api/reports/daily-analysis/run", {});
-        await this.loadReports();
-        this.notify("리포트를 생성했습니다.");
-      } catch (error) {
-        this.notify(error.message);
-      } finally {
-        this.reportGenerating = false;
-      }
-    },
-    downloadReport(report) {
-      if (!report || !report.pdfUrl) return;
-      location.href = `${API_BASE_URL}${report.pdfUrl}`;
-    },
     async createPost() {
       const data = await api.post("/api/community/posts", { ...this.postForm, userId: this.user.id });
       this.community = { ...data, category: "all" };
@@ -594,6 +573,271 @@ export default {
       } finally {
         this.coachV2Loading = false;
       }
+    },
+    reportMeals() {
+      const date = this.reportForm.date;
+      const rank = { breakfast: 1, lunch: 2, dinner: 3, snack: 4 };
+      return this.meals
+        .filter(meal => meal.mealDate === date)
+        .sort((a, b) => (rank[a.mealType] || 9) - (rank[b.mealType] || 9));
+    },
+    reportSummary(meals) {
+      return meals.reduce((acc, meal) => {
+        const nutrition = meal.nutrition || {};
+        acc.calories += Number(nutrition.calories || 0);
+        acc.carbs += Number(nutrition.carbs || 0);
+        acc.protein += Number(nutrition.protein || 0);
+        acc.fat += Number(nutrition.fat || 0);
+        return acc;
+      }, { calories: 0, carbs: 0, protein: 0, fat: 0 });
+    },
+    async generateDailyReport() {
+      const meals = this.reportMeals();
+      if (!meals.length) {
+        this.notify("선택한 날짜에 식단 기록이 없습니다.");
+        return;
+      }
+
+      this.reportLoading = true;
+      try {
+        const analyses = [];
+        for (const meal of meals) {
+          const result = await api.post("/api/coach/advice", {
+            userId: this.user.id,
+            mealId: meal.id,
+            question: `${this.reportForm.date} ${this.mealLabel(meal.mealType)} 식단을 일일 리포트용으로 간결하게 분석해줘.`
+          });
+          analyses.push({
+            label: this.mealLabel(meal.mealType),
+            advice: result.advice || ""
+          });
+        }
+
+        await this.downloadReportPdf({
+          date: this.reportForm.date,
+          userName: this.user && (this.user.nickname || this.user.id) ? (this.user.nickname || this.user.id) : "user-demo",
+          meals,
+          summary: this.reportSummary(meals),
+          analyses
+        });
+        this.notify("일일 식단 리포트를 다운로드했습니다.");
+      } catch (error) {
+        this.notify(error.message);
+      } finally {
+        this.reportLoading = false;
+      }
+    },
+    async downloadReportPdf(report) {
+      const canvas = document.createElement("canvas");
+      const scale = 2;
+      const width = 794;
+      const height = 1123;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(scale, scale);
+      ctx.textBaseline = "top";
+
+      const page = { x: 56, y: 54, w: width - 112 };
+      let y = page.y;
+      const colors = {
+        ink: "#17201f",
+        muted: "#61706d",
+        brand: "#006a63",
+        brandDark: "#004f4a",
+        brandSoft: "#e7f5ef",
+        amber: "#fff2d8",
+        amberText: "#8a4d00",
+        blue: "#e8f1ff",
+        blueText: "#2557a7",
+        rose: "#fdeceb",
+        roseText: "#9b2f28",
+        line: "#d7e4df",
+        panel: "#ffffff",
+        bg: "#f6faf8"
+      };
+      const font = (size, weight = "400") => `${weight} ${size}px "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif`;
+      const n1 = value => Number(value || 0).toFixed(1);
+      const formatDate = date => {
+        const [yy, mm, dd] = String(date).split("-");
+        return `${yy}년 ${mm}월 ${dd}일`;
+      };
+      const fillRound = (x, y, w, h, r, fill, stroke = "") => {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      };
+      const text = (value, x, y, size = 16, weight = "400", color = colors.ink) => {
+        ctx.font = font(size, weight);
+        ctx.fillStyle = color;
+        ctx.fillText(value, x, y);
+      };
+      const wrapLines = (value, maxWidth, size = 15, weight = "400") => {
+        ctx.font = font(size, weight);
+        const source = String(value || "").replace(/\s+/g, " ").trim();
+        if (!source) return [];
+        const words = source.split(" ");
+        const lines = [];
+        let current = "";
+        for (const word of words) {
+          const next = current ? `${current} ${word}` : word;
+          if (ctx.measureText(next).width > maxWidth && current) {
+            lines.push(current);
+            current = word;
+          } else {
+            current = next;
+          }
+        }
+        if (current) lines.push(current);
+        return lines;
+      };
+      const sectionTitle = (label, icon, yPos) => {
+        text(icon, page.x, yPos + 1, 18, "700", colors.brand);
+        text(label, page.x + 28, yPos, 21, "800", colors.ink);
+        ctx.strokeStyle = colors.line;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(page.x, yPos + 34);
+        ctx.lineTo(page.x + page.w, yPos + 34);
+        ctx.stroke();
+        return yPos + 54;
+      };
+
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, width, height);
+
+      fillRound(page.x, y, page.w, 118, 18, colors.brand);
+      text("YamYam Coach", page.x + 28, y + 24, 17, "700", "#d7fff4");
+      text("일일 식단 리포트", page.x + 28, y + 51, 32, "800", "#ffffff");
+      fillRound(page.x + page.w - 214, y + 28, 176, 54, 12, "rgba(255,255,255,0.16)");
+      text(formatDate(report.date), page.x + page.w - 194, y + 42, 16, "800", "#ffffff");
+      text(`사용자  ${report.userName}`, page.x + page.w - 194, y + 64, 13, "600", "#d7fff4");
+      y += 148;
+
+      y = sectionTitle("영양 섭취 현황", "01", y);
+      const cards = [
+        { label: "칼로리", value: `${n1(report.summary.calories)}`, unit: "kcal", bg: colors.brandSoft, fg: colors.brandDark },
+        { label: "탄수화물", value: `${n1(report.summary.carbs)}`, unit: "g", bg: colors.amber, fg: colors.amberText },
+        { label: "단백질", value: `${n1(report.summary.protein)}`, unit: "g", bg: colors.blue, fg: colors.blueText },
+        { label: "지방", value: `${n1(report.summary.fat)}`, unit: "g", bg: colors.rose, fg: colors.roseText }
+      ];
+      const cardGap = 12;
+      const cardW = (page.w - cardGap * 3) / 4;
+      cards.forEach((card, index) => {
+        const cx = page.x + index * (cardW + cardGap);
+        fillRound(cx, y, cardW, 92, 14, card.bg, colors.line);
+        text(card.label, cx + 18, y + 17, 14, "800", card.fg);
+        text(card.value, cx + 18, y + 43, 24, "800", colors.ink);
+        text(card.unit, cx + 18 + ctx.measureText(card.value).width + 8, y + 52, 13, "700", colors.muted);
+      });
+      y += 126;
+
+      y = sectionTitle("기록된 식사", "02", y);
+      const mealBoxH = Math.max(112, 30 + report.meals.length * 42);
+      fillRound(page.x, y, page.w, mealBoxH, 14, colors.panel, colors.line);
+      let mealY = y + 18;
+      for (const meal of report.meals) {
+        const foodNames = (meal.foods || []).map(food => food.name).join(", ") || "음식 정보 없음";
+        const nutrition = meal.nutrition || {};
+        fillRound(page.x + 18, mealY, 74, 28, 14, colors.brandSoft);
+        text(this.mealLabel(meal.mealType), page.x + 38, mealY + 6, 13, "800", colors.brandDark);
+        const lines = wrapLines(foodNames, 390, 14, "600");
+        text(lines[0] || foodNames, page.x + 108, mealY + 2, 14, "700", colors.ink);
+        if (lines[1]) text(lines[1], page.x + 108, mealY + 22, 13, "500", colors.muted);
+        text(`${n1(nutrition.calories)} kcal`, page.x + page.w - 132, mealY + 2, 14, "800", colors.brand);
+        text(`탄 ${n1(nutrition.carbs)}g · 단 ${n1(nutrition.protein)}g · 지 ${n1(nutrition.fat)}g`, page.x + page.w - 210, mealY + 23, 12, "600", colors.muted);
+        mealY += 42;
+      }
+      y += mealBoxH + 28;
+
+      y = sectionTitle("AI 코치 분석", "03", y);
+      report.analyses.forEach((analysis, index) => {
+        const allLines = wrapLines(analysis.advice, page.w - 48, 15, "400");
+        const lines = allLines.length > 7 ? [...allLines.slice(0, 6), `${allLines[6]} ...`] : allLines;
+        const cardH = Math.max(92, 58 + lines.length * 22);
+        const tone = [colors.brandSoft, colors.blue, colors.amber, colors.rose][index % 4];
+        fillRound(page.x, y, page.w, cardH, 14, colors.panel, colors.line);
+        fillRound(page.x, y, 8, cardH, 4, tone);
+        fillRound(page.x + 22, y + 18, 86, 30, 15, tone);
+        text(analysis.label, page.x + 46, y + 25, 13, "800", colors.brandDark);
+        let lineY = y + 56;
+        lines.forEach(line => {
+          text(line, page.x + 24, lineY, 15, "400", colors.ink);
+          lineY += 22;
+        });
+        y += cardH + 14;
+      });
+
+      text("YamYam Coach daily report", page.x, height - 42, 11, "600", colors.muted);
+      text("Generated from selected meal records and V1 coach analysis.", page.x + 438, height - 42, 11, "600", colors.muted);
+
+      const jpegDataUrl = canvas.toDataURL("image/jpeg", 0.94);
+      const pdfBytes = this.buildImagePdf(jpegDataUrl, 595.28, 841.89, canvas.width, canvas.height);
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `yamyam-daily-report-${report.date}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
+    buildImagePdf(dataUrl, pageWidth, pageHeight, imageWidth, imageHeight) {
+      const encoder = new TextEncoder();
+      const imageBytes = Uint8Array.from(atob(dataUrl.split(",")[1]), char => char.charCodeAt(0));
+      const parts = [];
+      const offsets = [0];
+      let length = 0;
+      const push = value => {
+        const bytes = typeof value === "string" ? encoder.encode(value) : value;
+        parts.push(bytes);
+        length += bytes.length;
+      };
+      const object = (id, body) => {
+        offsets[id] = length;
+        push(`${id} 0 obj\n`);
+        push(body);
+        push("\nendobj\n");
+      };
+
+      push("%PDF-1.4\n");
+      object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+      object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+      object(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>`);
+      offsets[4] = length;
+      push("4 0 obj\n");
+      push(`<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imageBytes.length} >>\nstream\n`);
+      push(imageBytes);
+      push("\nendstream\nendobj\n");
+      const content = `q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im1 Do\nQ`;
+      object(5, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+
+      const xrefOffset = length;
+      push("xref\n0 6\n0000000000 65535 f \n");
+      for (let i = 1; i <= 5; i += 1) {
+        push(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+      }
+      push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+      const pdf = new Uint8Array(length);
+      let cursor = 0;
+      for (const part of parts) {
+        pdf.set(part, cursor);
+        cursor += part.length;
+      }
+      return pdf;
     },
     mealLabel(type) {
       return { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" }[type] || type;
@@ -692,7 +936,7 @@ export default {
           <div class="auth-coach-tags">
             <span>식단 기록</span>
             <span>AI 분석</span>
-            <span>리포트 확인</span>
+            <span>식단 기록</span>
           </div>
         </div>
       </div>
@@ -703,7 +947,7 @@ export default {
         <div class="auth-mobile-brand">YamYam Coach</div>
         <div class="auth-form-header">
           <h2>로그인</h2>
-          <p>계정에 로그인해 식단과 리포트를 확인하세요.</p>
+          <p>계정에 로그인해 식단 기록과 AI 코칭을 확인하세요.</p>
         </div>
         <form @submit.prevent="login" class="auth-form-stack">
           <label class="auth-field">
@@ -853,11 +1097,11 @@ export default {
       <nav class="desktop-nav">
         <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')">Dashboard</a>
         <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')">History</a>
+        <a :class="navClass('/reports')" href="/reports" @click.prevent="go('/reports')">Reports</a>
         <a :class="navClass('/community')" href="/community" @click.prevent="go('/community')">Community</a>
         <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')">AI Coach</a>
         <a :class="navClass('/coach-v2')" href="/coach-v2" @click.prevent="go('/coach-v2')">AI Coach V2</a>
         <a :class="navClass('/challenge')" href="/challenge" @click.prevent="go('/challenge')">Challenge</a>
-        <a :class="navClass('/reports')" href="/reports" @click.prevent="go('/reports')">Reports</a>
       </nav>
       <div class="nav-actions">
         <button class="btn btn-success btn-sm" @click="go('/meals/new')">
@@ -1496,62 +1740,6 @@ export default {
       </aside>
     </section>
 
-    <section v-if="route === 'reports'" class="reports-page">
-      <div class="reports-main">
-        <div class="report-action-panel">
-          <div>
-            <div class="eyebrow">Batch Report</div>
-            <h2>일일 식단 리포트</h2>
-          </div>
-          <button class="btn btn-success" :disabled="reportGenerating" @click="runDailyAnalysis">
-            <span v-if="reportGenerating" class="spinner-border spinner-border-sm me-2"></span>
-            <i v-else class="bi bi-play-fill me-1"></i>{{ reportGenerating ? '생성 중...' : '리포트 생성' }}
-          </button>
-        </div>
-
-        <div v-if="reportGenerating" class="report-loading">
-          <span class="spinner-border spinner-border-sm text-success"></span>
-          <strong>리포트를 생성 중입니다.</strong>
-          <span>전날 식단 분석과 PDF 생성이 끝나면 목록이 자동으로 갱신됩니다.</span>
-        </div>
-
-        <div v-if="!reports.length" class="challenge-empty">
-          아직 생성된 리포트가 없습니다. 전날 식단 기록이 있다면 리포트 생성을 실행해 보세요.
-        </div>
-
-        <article v-for="report in reports" :key="report.analysisDate" class="report-card">
-          <div class="report-card-head">
-            <div>
-              <span class="badge-soft">{{ report.analysisDate }}</span>
-              <h3>{{ report.analysisDate }} 식단 분석</h3>
-            </div>
-            <button class="btn btn-outline-success btn-sm" :disabled="!report.hasPdf" @click="downloadReport(report)">
-              <i class="bi bi-download me-1"></i>PDF 다운로드
-            </button>
-          </div>
-          <div class="report-metrics">
-            <div class="report-metric-calories"><span>칼로리</span><strong>{{ Math.round(report.totalCalories) }} kcal</strong></div>
-            <div class="report-metric-carbs"><span>탄수화물</span><strong>{{ Math.round(report.totalCarbs) }}g</strong></div>
-            <div class="report-metric-protein"><span>단백질</span><strong>{{ Math.round(report.totalProtein) }}g</strong></div>
-            <div class="report-metric-fat"><span>지방</span><strong>{{ Math.round(report.totalFat) }}g</strong></div>
-          </div>
-          <div class="report-summary">{{ report.aiSummary || '분석 요약이 없습니다.' }}</div>
-        </article>
-      </div>
-
-      <aside class="reports-side">
-        <div class="panel">
-          <div class="panel-body">
-            <h2 class="section-subtitle">생성 기준</h2>
-            <div class="summary-stack">
-              <div class="summary-row"><span>분석 대상</span><strong>전날</strong></div>
-              <div class="summary-row"><span>PDF</span><strong>{{ reports.filter(report => report.hasPdf).length }}</strong></div>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </section>
-
     <section v-if="route === 'community'" class="community-page">
       <div class="community-main">
         <div class="community-filter-row">
@@ -1647,6 +1835,64 @@ export default {
                 <strong>{{ meal.mealDate }}</strong>
                 <div class="muted">{{ mealCalories(meal) }} kcal</div>
               </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section v-if="route === 'reports'" class="reports-page">
+      <div class="reports-main">
+        <div class="panel report-builder-panel">
+          <div class="panel-body">
+            <div class="section-head">
+              <h2><i class="bi bi-file-earmark-pdf text-primary"></i> 일일 식단 리포트</h2>
+            </div>
+            <form class="report-form" @submit.prevent="generateDailyReport">
+              <div>
+                <label class="form-label">리포트 날짜</label>
+                <input class="form-control soft-input" type="date" v-model="reportForm.date" required>
+              </div>
+              <button class="btn btn-success" :disabled="reportLoading">
+                <span v-if="reportLoading" class="spinner-border spinner-border-sm me-2"></span>
+                {{ reportLoading ? "생성 중..." : "리포트 생성" }}
+                <i v-if="!reportLoading" class="bi bi-download ms-1"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-body">
+            <div class="section-head">
+              <h2><i class="bi bi-calendar-check text-primary"></i> 선택 날짜 식단</h2>
+              <span class="badge-soft">{{ reportMeals().length }}건</span>
+            </div>
+            <div v-if="!reportMeals().length" class="empty-state compact-empty">
+              선택한 날짜에 식단 기록이 없습니다.
+            </div>
+            <div v-else class="report-meal-list">
+              <div v-for="meal in reportMeals()" :key="meal.id" class="report-meal-row">
+                <span :class="['badge-soft', 'meal-type-badge', mealTypeClass(meal.mealType)]">{{ mealLabel(meal.mealType) }}</span>
+                <div>
+                  <strong>{{ mealFoodNames(meal) }}</strong>
+                  <div class="muted">{{ mealCalories(meal) }} kcal · 탄 {{ Number(meal.nutrition && meal.nutrition.carbs || 0).toFixed(1) }}g · 단 {{ Number(meal.nutrition && meal.nutrition.protein || 0).toFixed(1) }}g · 지 {{ Number(meal.nutrition && meal.nutrition.fat || 0).toFixed(1) }}g</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="reports-side">
+        <div class="panel">
+          <div class="panel-body">
+            <div class="section-head"><h2><i class="bi bi-pie-chart text-primary"></i> 영양 합계</h2></div>
+            <div class="report-total-list">
+              <div><span>칼로리</span><strong>{{ reportSummary(reportMeals()).calories.toFixed(1) }} kcal</strong></div>
+              <div><span>탄수화물</span><strong>{{ reportSummary(reportMeals()).carbs.toFixed(1) }} g</strong></div>
+              <div><span>단백질</span><strong>{{ reportSummary(reportMeals()).protein.toFixed(1) }} g</strong></div>
+              <div><span>지방</span><strong>{{ reportSummary(reportMeals()).fat.toFixed(1) }} g</strong></div>
             </div>
           </div>
         </div>
@@ -1810,8 +2056,8 @@ export default {
   <nav class="mobile-bottom-nav">
     <a :class="navClass('/home')" href="/home" @click.prevent="go('/home')"><i class="bi bi-house"></i><span>Home</span></a>
     <a :class="navClass('/meals')" href="/meals" @click.prevent="go('/meals')"><i class="bi bi-clock-history"></i><span>History</span></a>
-    <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')"><i class="bi bi-robot"></i><span>Coach</span></a>
     <a :class="navClass('/reports')" href="/reports" @click.prevent="go('/reports')"><i class="bi bi-file-earmark-pdf"></i><span>Reports</span></a>
+    <a :class="navClass('/coach')" href="/coach" @click.prevent="go('/coach')"><i class="bi bi-robot"></i><span>Coach</span></a>
     <a :class="navClass('/profile')" href="/profile" @click.prevent="go('/profile')"><i class="bi bi-person"></i><span>Profile</span></a>
   </nav>
   <div v-if="toast" class="toast-line">{{ toast }}</div>

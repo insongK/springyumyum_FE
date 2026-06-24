@@ -190,6 +190,32 @@ a { color: inherit; text-decoration: none; }
 .layout-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; }
 .dashboard-main, .dashboard-side { display: grid; align-content: start; gap: 18px; }
+.reports-page { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+.reports-main { display: grid; gap: 18px; }
+.reports-side { position: sticky; top: 94px; }
+.report-form { display: grid; grid-template-columns: minmax(220px, 280px) auto; gap: 14px; align-items: end; }
+.report-meal-list { display: grid; gap: 12px; }
+.report-meal-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.report-meal-row:first-child { border-top: 0; padding-top: 0; }
+.report-total-list { display: grid; gap: 12px; }
+.report-total-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.report-total-list div:first-child { border-top: 0; padding-top: 0; }
+.report-total-list span { color: var(--muted); font-weight: 700; }
+.report-total-list strong { color: var(--brand-dark); }
 
 .metric { min-height: 112px; padding: 18px; }
 .metric-label { color: var(--muted); font-size: 0.86rem; font-weight: 700; }
@@ -1091,164 +1117,6 @@ a { color: inherit; text-decoration: none; }
   color: var(--brand);
   font-size: 1.18rem;
   font-weight: 900;
-}
-
-.reports-page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 24px;
-  align-items: start;
-}
-
-.reports-main {
-  min-width: 0;
-  display: grid;
-  gap: 18px;
-}
-
-.report-action-panel,
-.report-card {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-
-.report-action-panel {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 22px;
-}
-
-.report-action-panel h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(1.45rem, 2.3vw, 1.9rem);
-  font-weight: 900;
-}
-
-.report-action-panel p {
-  margin: 6px 0 0;
-  color: var(--muted);
-}
-
-.report-card {
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-}
-
-.report-loading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid #b9efc8;
-  border-radius: 12px;
-  background: #eefbf1;
-  color: var(--brand-dark);
-  box-shadow: var(--shadow);
-}
-
-.report-loading strong {
-  color: var(--ink);
-}
-
-.report-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.report-card-head h3 {
-  margin: 10px 0 0;
-  color: var(--ink);
-  font-size: 1.18rem;
-  font-weight: 900;
-}
-
-.report-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.report-metrics div {
-  display: grid;
-  gap: 4px;
-  padding: 15px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-}
-
-.report-metrics span {
-  font-size: 0.82rem;
-  font-weight: 900;
-}
-
-.report-metrics strong {
-  font-size: 1.12rem;
-  font-weight: 900;
-}
-
-.report-metric-calories {
-  border-color: #ffd7a3 !important;
-  background: #fff3e0;
-}
-
-.report-metric-calories span,
-.report-metric-calories strong {
-  color: #8f4e00;
-}
-
-.report-metric-carbs {
-  border-color: #b7eee7 !important;
-  background: #e5fbf8;
-}
-
-.report-metric-carbs span,
-.report-metric-carbs strong {
-  color: #00645f;
-}
-
-.report-metric-protein {
-  border-color: #b9efc8 !important;
-  background: #e8f8ee;
-}
-
-.report-metric-protein span,
-.report-metric-protein strong {
-  color: #0d6530;
-}
-
-.report-metric-fat {
-  border-color: #d9cdfb !important;
-  background: #f0ebff;
-}
-
-.report-metric-fat span,
-.report-metric-fat strong {
-  color: #50359a;
-}
-
-.report-summary {
-  padding: 16px;
-  border-radius: 12px;
-  background: #f7faf8;
-  color: var(--ink);
-  line-height: 1.75;
-  white-space: pre-line;
-}
-
-.reports-side {
-  display: grid;
-  gap: 18px;
-  position: sticky;
-  top: 96px;
 }
 
 .community-main {
@@ -2417,7 +2285,7 @@ a { color: inherit; text-decoration: none; }
   .app-nav-inner { min-height: 64px; }
   .nav-actions .btn { display: none; }
   .mobile-bottom-nav { display: flex; }
-  .metric-grid, .layout-grid, .wide-grid, .social-grid, .two-grid, .auth-grid, .dashboard-grid, .meals-page-grid, .meal-form-grid, .community-page, .challenge-page, .reports-page, .active-challenge-grid, .challenge-card-grid, .coach-page { grid-template-columns: 1fr; }
+  .metric-grid, .layout-grid, .wide-grid, .social-grid, .two-grid, .auth-grid, .dashboard-grid, .reports-page, .meals-page-grid, .meal-form-grid, .community-page, .challenge-page, .active-challenge-grid, .challenge-card-grid, .coach-page { grid-template-columns: 1fr; }
   .meal-row, .list-row { grid-template-columns: 1fr; }
   .meal-card-row { grid-template-columns: 54px minmax(0, 1fr); }
   .meal-card-row .text-end { grid-column: 2; text-align: left !important; }
@@ -2426,6 +2294,8 @@ a { color: inherit; text-decoration: none; }
   .list-row.compact .btn { grid-column: 1 / -1; }
   .row-actions { justify-content: flex-start; }
   .sticky-summary { position: static; }
+  .reports-side { position: static; }
+  .report-form { grid-template-columns: 1fr; }
   .meal-log-card { grid-template-columns: 1fr; }
   .meal-log-card-main { grid-template-columns: 1fr; }
   .meal-log-calories { justify-items: start; text-align: left; }
@@ -2441,7 +2311,6 @@ a { color: inherit; text-decoration: none; }
   }
   .community-side { position: static; }
   .challenge-side { position: static; }
-  .reports-side { position: static; }
   .coach-input-stack { position: static; }
   .coach-response-stack { padding-top: 0; }
   .auth-layout { grid-template-columns: 1fr; }
@@ -2494,17 +2363,13 @@ a { color: inherit; text-decoration: none; }
     grid-template-columns: 1fr;
   }
   .challenge-header,
-  .challenge-card-head,
-  .report-action-panel,
-  .report-card-head {
+  .challenge-card-head {
     align-items: flex-start;
     flex-direction: column;
   }
-  .challenge-header .btn,
-  .report-action-panel .btn {
+  .challenge-header .btn {
     width: 100%;
   }
-  .report-metrics { grid-template-columns: 1fr; }
   .community-post-head {
     align-items: flex-start;
     flex-direction: column;
